@@ -33,4 +33,20 @@ void browseDataFolder(UA_Client *client, UA_NodeId folderNodeId,
 /* Browse della cartella ComponentCapabilities/ */
 void browseComponentCapabilities(UA_Client *client, UA_NodeId capFolderNodeId);
 
+/* Browse NetworkInterfaces/ sotto Objects (Part 82, 6.5.2)
+ * Naviga interfacce fisiche e relativi dati LLDP */
+void browseNetworkInterfaces(UA_Client *client, UA_NodeId niFolderNodeId);
+
+/* Browse di una singola interfaccia di rete (es. enp0s31f6) */
+void browseNetworkInterface(UA_Client *client, UA_NodeId ifNodeId,
+                            const char *ifName);
+
+/* Browse LldpData/ di un'interfaccia: LocalSystemData + RemoteSystemsData */
+void browseLldpData(UA_Client *client, UA_NodeId lldpFolderNodeId,
+                    const char *indent);
+
+/* Browse di un singolo RemoteSystem (vicino LLDP) */
+void browseLldpRemoteSystem(UA_Client *client, UA_NodeId rsNodeId,
+                            const char *rsName, const char *indent);
+
 #endif /* UAFX_BROWSE_H */

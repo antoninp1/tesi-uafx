@@ -318,6 +318,8 @@ int main(void) {
     /* ─── Crea server ────────────────────────────────────────── */
     UA_Server *server = UA_Server_new();
     UA_ServerConfig *config = UA_Server_getConfig(server);
+    UA_String hostname = UA_String_fromChars("0.0.0.0");
+   // UA_ServerConfig_setMinimal(config, 4840, &hostname);
 
     static UA_DataTypeArray customDataTypesAC = {
         NULL, // AC non ha figli in questa catena
@@ -339,9 +341,10 @@ int main(void) {
 
     // Diamo in pasto l'intera catena al server
     config->customDataTypes = &customDataTypesDI;
-    UA_ServerConfig_setDefault(config);
-//    UA_String hostname = UA_String_fromChars("192.168.100.4");
-  //  config->customHostname = hostname;
+    UA_ServerConfig_setMinimal(config, 4840,NULL);
+   // UA_ServerConfig_setDefault(config);
+    //UA_String hostname = UA_String_fromChars("192.168.100.4");
+    //config->customHostname = hostname;
     config->applicationDescription.applicationType = UA_APPLICATIONTYPE_SERVER;
 
     UA_String_clear(&config->applicationDescription.applicationUri);
@@ -351,7 +354,6 @@ int main(void) {
     UA_LocalizedText_clear(&config->applicationDescription.applicationName);
     config->applicationDescription.applicationName =
         UA_LOCALIZEDTEXT_ALLOC("en-US", "UAFX Temperature Sensor");
-
     config->mdnsEnabled = true;
     config->mdnsConfig.mdnsServerName =
         UA_String_fromChars("MioServer");
@@ -360,7 +362,7 @@ int main(void) {
     UA_String *caps = (UA_String *)UA_Array_new(1, &UA_TYPES[UA_TYPES_STRING]);
     caps[0] = UA_String_fromChars("UAFX");
     config->mdnsConfig.serverCapabilities = caps;
-  //  config->mdnsInterfaceIP = hostname;
+   config->mdnsInterfaceIP = hostname;
 
 #ifdef UA_ENABLE_DISCOVERY_MULTICAST
     printf("[SERVER] ✓ mDNS Discovery: ENABLED\n");
