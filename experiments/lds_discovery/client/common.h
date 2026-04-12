@@ -14,6 +14,6 @@
 #include <time.h>
 
 #define MAX_DISCOVERED_SERVERS 16
-#define MAX_STR_LEN            256
+#define MAX_STR_LEN            128
 
 #endif /* UAFX_COMMON_H */

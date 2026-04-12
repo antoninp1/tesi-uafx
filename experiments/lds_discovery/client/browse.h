@@ -1,52 +1,71 @@
 /* ============================================================
  * browse.h
  *
- * Funzioni di browse dell'Address Space UAFX:
- * FxRoot → AutomationComponent → Assets, FunctionalEntities,
- * ComponentCapabilities, OutputData, InputData.
+ * Funzioni di browse dell'Address Space UAFX.
+ * Popolano le struct definite in model.h e (opzionalmente)
+ * stampano l'albero su stdout.
  * ============================================================ */
 
 #ifndef UAFX_BROWSE_H
 #define UAFX_BROWSE_H
 
 #include "common.h"
+#include "model.h"
 
 /* Browse completo della struttura UAFX di un server.
- * Percorso: Objects → FxRoot → AutomationComponent(s) */
-void browseServerUAFX(UA_Client *client, const char *endpoint);
+ * Popola un TopologyNode (NODE_TYPE_UAFX_SERVER):
+ *   - applicationUri, applicationName
+ *   - automationComponents[] (FxRoot)
+ *   - interfaces[] (NetworkInterfaces)
+ *   - id (chassisId estratto da LldpData/LocalSystemData) */
+void browseServerUAFX(UA_Client *client, const char *endpoint,
+                      TopologyNode *node);
 
-/* Browse di un AutomationComponent e dei suoi sotto-nodi */
+/* Browse di un AutomationComponent. Popola la struct AC. */
 void browseAutomationComponent(UA_Client *client, UA_NodeId acNodeId,
-                               const char *acName);
+                               const char *acName,
+                               AutomationComponent *ac);
 
-/* Browse della cartella Assets/ di un AC */
-void browseAssets(UA_Client *client, UA_NodeId assetsFolderNodeId);
+/* Browse della cartella Assets/. Popola ac->assets[]. */
+void browseAssets(UA_Client *client, UA_NodeId assetsFolderNodeId,
+                  AutomationComponent *ac);
 
-/* Browse di una singola FunctionalEntity */
+/* Browse di una singola FunctionalEntity. Popola la struct FE. */
 void browseFunctionalEntity(UA_Client *client, UA_NodeId feNodeId,
-                            const char *feName);
+                            const char *feName,
+                            FunctionalEntity *fe);
 
-/* Browse di una cartella dati (OutputData / InputData) */
+/* Browse di una cartella dati (OutputData / InputData).
+ * Popola un array di DataVariable, restituendo il count via *countOut. */
 void browseDataFolder(UA_Client *client, UA_NodeId folderNodeId,
-                      const char *folderName, const char *indent);
+                      const char *folderName, const char *indent,
+                      DataVariable *vars, size_t maxVars, size_t *countOut);
 
-/* Browse della cartella ComponentCapabilities/ */
-void browseComponentCapabilities(UA_Client *client, UA_NodeId capFolderNodeId);
+/* Browse della cartella ComponentCapabilities/. Popola ac->capabilities. */
+void browseComponentCapabilities(UA_Client *client,
+                                 UA_NodeId capFolderNodeId,
+                                 ComponentCapabilities *caps);
 
-/* Browse NetworkInterfaces/ sotto Objects (Part 82, 6.5.2)
- * Naviga interfacce fisiche e relativi dati LLDP */
-void browseNetworkInterfaces(UA_Client *client, UA_NodeId niFolderNodeId);
+/* Browse NetworkInterfaces/ (Part 82, 6.5.2).
+ * Popola node->interfaces[] e setta node->id dal LocalSystemData. */
+void browseNetworkInterfaces(UA_Client *client, UA_NodeId niFolderNodeId,
+                             TopologyNode *node);
 
-/* Browse di una singola interfaccia di rete (es. enp0s31f6) */
+/* Browse di una singola interfaccia di rete.
+ * Popola la struct NetworkInterface. */
 void browseNetworkInterface(UA_Client *client, UA_NodeId ifNodeId,
-                            const char *ifName);
+                            const char *ifName,
+                            NetworkInterface *iface);
 
-/* Browse LldpData/ di un'interfaccia: LocalSystemData + RemoteSystemsData */
+/* Browse LldpData/ di un'interfaccia.
+ * Popola iface->localData e iface->neighbors[]. */
 void browseLldpData(UA_Client *client, UA_NodeId lldpFolderNodeId,
-                    const char *indent);
+                    const char *indent,
+                    NetworkInterface *iface);
 
-/* Browse di un singolo RemoteSystem (vicino LLDP) */
+/* Browse di un singolo RemoteSystem. Popola la struct LldpNeighbor. */
 void browseLldpRemoteSystem(UA_Client *client, UA_NodeId rsNodeId,
-                            const char *rsName, const char *indent);
+                            const char *rsName, const char *indent,
+                            LldpNeighbor *neighbor);
 
 #endif /* UAFX_BROWSE_H */

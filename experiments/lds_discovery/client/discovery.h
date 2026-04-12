@@ -9,7 +9,7 @@
 
 #include "common.h"
 
-#define LDS_URL "opc.tcp://192.168.17.75:4840"
+#define LDS_URL "opc.tcp://192.168.17.73:4840"
 
 typedef struct {
     char   urls[MAX_DISCOVERED_SERVERS][MAX_STR_LEN];

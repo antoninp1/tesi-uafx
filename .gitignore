@@ -5,3 +5,4 @@ build/
 *.swp
 open62541.c
 open62541.h
+*.env
