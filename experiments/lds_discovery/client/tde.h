@@ -48,6 +48,15 @@ typedef struct {
     char localPort[MAX_STR_LEN]; /* porta locale su cui e' visto il vicino */
 } TdeNeighborInfo;
 
+/* Una porta locale del dispositivo (da lldpcli show interfaces) */
+typedef struct {
+    char     name[MAX_STR_LEN];     /* "PORT_3", "enp43s0", ecc. */
+    char     portId[MAX_STR_LEN];   /* MAC o ifname */
+    uint32_t portIdSubtype;         /* 3=MAC, 5=ifName, 7=local */
+    char     portDescr[MAX_STR_LEN];
+    uint32_t ttl;
+} TdeLocalPort;
+
 /* ============================================================
  * TdeQueryResult
  *
@@ -66,9 +75,11 @@ typedef struct {
     char     localSysDescr[MAX_STR_LEN];
     char     localMgmtAddress[MAX_STR_LEN];
     char     localSystemCapabilities[MAX_STR_LEN];
+    TdeLocalPort localPorts[MAX_LOCAL_PORTS]; 
+    size_t       localPortsCount;
 
     /* Vicini LLDP visti da questo dispositivo */
-    TdeNeighborInfo neighbors[MAX_LLDP_NEIGHBORS];
+    TdeNeighborInfo neighbors[MAX_LOCAL_PORTS];
     size_t          neighborsCount;
 } TdeQueryResult;
 

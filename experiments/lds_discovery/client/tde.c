@@ -28,7 +28,7 @@
 
 /* Due comandi separati da un marker, entrambi in JSON */
 #define RELYUM_LLDP_CMD \
-    "echo sys-admin | sudo -S lldpcli show chassis -f json 2>/dev/null; " \
+    "echo sys-admin | sudo -S lldpcli show interfaces -f json 2>/dev/null; " \
     "echo '---SEPARATOR---'; " \
     "echo sys-admin | sudo -S lldpcli show neighbors -f json 2>/dev/null"
 
@@ -173,61 +173,105 @@ static bool runSshCommand(const char *user, const char *password,
 }
 
 /* ============================================================
- * parseLocalChassis
+ * parseLocalInterfaces
  *
- * Parsa il JSON di "lldpcli show chassis -f json".
- *
- * Struttura:
- * { "local-chassis": { "chassis": { "<sysName>": {
- *     "id": { "type": "mac", "value": "..." },
- *     "descr": "...",
- *     "mgmt-ip": [...] o "...",
- *     "capability": {...} o [...]
- * }}}}
+ * Parsa il JSON di "lldpcli show interfaces -f json".
  * ============================================================ */
 
-static void parseLocalChassis(const char *jsonStr, TdeQueryResult *result) {
+static void parseLocalInterfaces(const char *jsonStr, TdeQueryResult *result) {
     cJSON *root = cJSON_Parse(jsonStr);
     if(!root) {
-        printf("[TDE] JSON parse error (local chassis)\n");
+        printf("[TDE] JSON parse error (local interfaces)\n");
         return;
     }
 
-    cJSON *localChassis = cJSON_GetObjectItem(root, "local-chassis");
-    if(!localChassis) { cJSON_Delete(root); return; }
+    cJSON *lldp = cJSON_GetObjectItem(root, "lldp");
+    if(!lldp) { cJSON_Delete(root); return; }
 
-    cJSON *chassis = cJSON_GetObjectItem(localChassis, "chassis");
-    if(!chassis) { cJSON_Delete(root); return; }
-
-    /* Il sysName e' la chiave del primo (unico) figlio di "chassis" */
-    cJSON *sysNode = chassis->child;
-    if(!sysNode) { cJSON_Delete(root); return; }
-
-    safeCopy(result->localSysName, sysNode->string, MAX_STR_LEN);
-
-    /* id.type + id.value */
-    cJSON *id = cJSON_GetObjectItem(sysNode, "id");
-    if(id) {
-        cJSON *idType = cJSON_GetObjectItem(id, "type");
-        cJSON *idValue = cJSON_GetObjectItem(id, "value");
-        if(idValue && cJSON_IsString(idValue))
-            safeCopy(result->localChassisId, idValue->valuestring, MAX_STR_LEN);
-        if(idType && cJSON_IsString(idType))
-            result->localChassisIdSubtype = chassisIdTypeToSubtype(idType->valuestring);
+    cJSON *interfaces = cJSON_GetObjectItem(lldp, "interface");
+    if(!interfaces || !cJSON_IsArray(interfaces)) {
+        cJSON_Delete(root);
+        return;
     }
 
-    /* descr */
-    cJSON *descr = cJSON_GetObjectItem(sysNode, "descr");
-    if(descr && cJSON_IsString(descr))
-        safeCopy(result->localSysDescr, descr->valuestring, MAX_STR_LEN);
+    bool chassisExtracted = false;
 
-    /* mgmt-ip */
-    cJSON *mgmtIp = cJSON_GetObjectItem(sysNode, "mgmt-ip");
-    extractMgmtIp(mgmtIp, result->localMgmtAddress, MAX_STR_LEN);
+    /* Itera TUTTI gli elementi dell'array */
+    cJSON *ifaceEntry;
+    cJSON_ArrayForEach(ifaceEntry, interfaces) {
+        if(result->localPortsCount >= MAX_LOCAL_PORTS) break;
 
-    /* capabilities */
-    cJSON *cap = cJSON_GetObjectItem(sysNode, "capability");
-    extractCapabilities(cap, result->localSystemCapabilities, MAX_STR_LEN);
+        /* Ogni elemento ha una sola chiave: il nome della porta */
+        cJSON *portObj = ifaceEntry->child;
+        if(!portObj) continue;
+
+        const char *portName = portObj->string;
+
+        /* ─── Estrai chassis (solo dalla prima iterazione) ─── */
+        if(!chassisExtracted) {
+            cJSON *chassis = cJSON_GetObjectItem(portObj, "chassis");
+            if(chassis) {
+                cJSON *sysNode = chassis->child;
+                if(sysNode) {
+                    safeCopy(result->localSysName, sysNode->string, MAX_STR_LEN);
+
+                    cJSON *id = cJSON_GetObjectItem(sysNode, "id");
+                    if(id) {
+                        cJSON *idType = cJSON_GetObjectItem(id, "type");
+                        cJSON *idValue = cJSON_GetObjectItem(id, "value");
+                        if(idValue && cJSON_IsString(idValue))
+                            safeCopy(result->localChassisId, idValue->valuestring, MAX_STR_LEN);
+                        if(idType && cJSON_IsString(idType))
+                            result->localChassisIdSubtype = chassisIdTypeToSubtype(idType->valuestring);
+                    }
+
+                    cJSON *descr = cJSON_GetObjectItem(sysNode, "descr");
+                    if(descr && cJSON_IsString(descr))
+                        safeCopy(result->localSysDescr, descr->valuestring, MAX_STR_LEN);
+
+                    cJSON *mgmtIp = cJSON_GetObjectItem(sysNode, "mgmt-ip");
+                    extractMgmtIp(mgmtIp, result->localMgmtAddress, MAX_STR_LEN);
+
+                    cJSON *cap = cJSON_GetObjectItem(sysNode, "capability");
+                    extractCapabilities(cap, result->localSystemCapabilities, MAX_STR_LEN);
+
+                    chassisExtracted = true;
+                }
+            }
+        }
+
+        /* ─── Estrai i dati della porta locale ─── */
+        TdeLocalPort *lp = &result->localPorts[result->localPortsCount];
+        memset(lp, 0, sizeof(*lp));
+        safeCopy(lp->name, portName, MAX_STR_LEN);
+
+        cJSON *port = cJSON_GetObjectItem(portObj, "port");
+        if(port) {
+            cJSON *pid = cJSON_GetObjectItem(port, "id");
+            if(pid) {
+                cJSON *pidType = cJSON_GetObjectItem(pid, "type");
+                cJSON *pidValue = cJSON_GetObjectItem(pid, "value");
+                if(pidValue && cJSON_IsString(pidValue))
+                    safeCopy(lp->portId, pidValue->valuestring, MAX_STR_LEN);
+                if(pidType && cJSON_IsString(pidType))
+                    lp->portIdSubtype = portIdTypeToSubtype(pidType->valuestring);
+            }
+
+            cJSON *pdescr = cJSON_GetObjectItem(port, "descr");
+            if(pdescr && cJSON_IsString(pdescr))
+                safeCopy(lp->portDescr, pdescr->valuestring, MAX_STR_LEN);
+
+            cJSON *ttl = cJSON_GetObjectItem(port, "ttl");
+            if(ttl) {
+                if(cJSON_IsString(ttl))
+                    lp->ttl = (uint32_t)atoi(ttl->valuestring);
+                else if(cJSON_IsNumber(ttl))
+                    lp->ttl = (uint32_t)ttl->valueint;
+            }
+        }
+
+        result->localPortsCount++;
+    }
 
     cJSON_Delete(root);
 }
@@ -399,7 +443,7 @@ static bool queryRelyumTSN(const DiscoveryQueueEntry *entry,
     char *part2 = separator + strlen("---SEPARATOR---");
     while(*part2 == '\n' || *part2 == '\r' || *part2 == ' ') part2++;
 
-    parseLocalChassis(part1, result);
+    parseLocalInterfaces(part1, result);
     parseNeighbors(part2, result);
 
     result->success = true;
@@ -502,42 +546,51 @@ void tdeApplyResultToNode(const TdeQueryResult *result, TopologyNode *node) {
     node->reachable = true;
     node->visited = true;
 
-    /* Crea un'interfaccia aggregata con i vicini */
-    if(node->interfacesCount < MAX_NETWORK_INTERFACES) {
-        NetworkInterface *iface = &node->interfaces[node->interfacesCount];
-        memset(iface, 0, sizeof(NetworkInterface));
-        safeCopy(iface->name, "tde-aggregate", MAX_STR_LEN);
+    /* Crea una NetworkInterface per ogni porta locale */
+for(size_t i = 0; i < result->localPortsCount &&
+                  node->interfacesCount < MAX_NETWORK_INTERFACES; i++) {
+    const TdeLocalPort *lp = &result->localPorts[i];
 
-        /* Local data */
-        safeCopy(iface->localData.chassisId, result->localChassisId, MAX_STR_LEN);
-        iface->localData.chassisIdSubtype = result->localChassisIdSubtype;
-        safeCopy(iface->localData.sysName, result->localSysName, MAX_STR_LEN);
-        safeCopy(iface->localData.sysDescr, result->localSysDescr, MAX_STR_LEN);
-        safeCopy(iface->localData.mgmtAddress, result->localMgmtAddress, MAX_STR_LEN);
-        safeCopy(iface->localData.systemCapabilities,
-                 result->localSystemCapabilities, MAX_STR_LEN);
-        iface->hasLocalData = true;
+    NetworkInterface *iface = &node->interfaces[node->interfacesCount];
+    memset(iface, 0, sizeof(NetworkInterface));
+    safeCopy(iface->name, lp->name, MAX_STR_LEN);
+    safeCopy(iface->physAddress, lp->portId, MAX_STR_LEN);
 
-        /* Vicini */
-        size_t maxN = result->neighborsCount;
-        if(maxN > MAX_LLDP_NEIGHBORS) maxN = MAX_LLDP_NEIGHBORS;
-        for(size_t i = 0; i < maxN; i++) {
-            const TdeNeighborInfo *src = &result->neighbors[i];
-            LldpNeighbor *dst = &iface->neighbors[i];
-            memset(dst, 0, sizeof(*dst));
-            safeCopy(dst->chassisId, src->chassisId, MAX_STR_LEN);
-            dst->chassisIdSubtype = src->chassisIdSubtype;
-            safeCopy(dst->sysName, src->sysName, MAX_STR_LEN);
-            safeCopy(dst->sysDescr, src->sysDescr, MAX_STR_LEN);
-            safeCopy(dst->mgmtAddress, src->mgmtAddress, MAX_STR_LEN);
-            safeCopy(dst->portId, src->portId, MAX_STR_LEN);
-            dst->portIdSubtype = src->portIdSubtype;
-            safeCopy(dst->portDescr, src->portDescr, MAX_STR_LEN);
-            safeCopy(dst->systemCapabilities, src->systemCapabilities, MAX_STR_LEN);
-            dst->timeToLive = src->timeToLive;
-        }
-        iface->neighborsCount = maxN;
+    /* LocalData: popola con i dati globali del dispositivo
+     * + portId specifico di questa porta */
+    safeCopy(iface->localData.chassisId, result->localChassisId, MAX_STR_LEN);
+    iface->localData.chassisIdSubtype = result->localChassisIdSubtype;
+    safeCopy(iface->localData.sysName, result->localSysName, MAX_STR_LEN);
+    safeCopy(iface->localData.sysDescr, result->localSysDescr, MAX_STR_LEN);
+    safeCopy(iface->localData.mgmtAddress, result->localMgmtAddress, MAX_STR_LEN);
+    safeCopy(iface->localData.systemCapabilities,
+             result->localSystemCapabilities, MAX_STR_LEN);
+    safeCopy(iface->localData.portId, lp->portId, MAX_STR_LEN);
+    iface->localData.portIdSubtype = lp->portIdSubtype;
+    iface->hasLocalData = true;
 
-        node->interfacesCount++;
+    /* Cerca tra i neighbors quello che ha localPort == lp->name
+     * e copialo dentro questa interfaccia */
+    for(size_t k = 0; k < result->neighborsCount; k++) {
+        const TdeNeighborInfo *src = &result->neighbors[k];
+        if(strcmp(src->localPort, lp->name) != 0) continue;
+        if(iface->neighborsCount >= MAX_LLDP_NEIGHBORS) break;
+
+        LldpNeighbor *dst = &iface->neighbors[iface->neighborsCount];
+        memset(dst, 0, sizeof(*dst));
+        safeCopy(dst->chassisId, src->chassisId, MAX_STR_LEN);
+        dst->chassisIdSubtype = src->chassisIdSubtype;
+        safeCopy(dst->sysName, src->sysName, MAX_STR_LEN);
+        safeCopy(dst->sysDescr, src->sysDescr, MAX_STR_LEN);
+        safeCopy(dst->mgmtAddress, src->mgmtAddress, MAX_STR_LEN);
+        safeCopy(dst->portId, src->portId, MAX_STR_LEN);
+        dst->portIdSubtype = src->portIdSubtype;
+        safeCopy(dst->portDescr, src->portDescr, MAX_STR_LEN);
+        safeCopy(dst->systemCapabilities, src->systemCapabilities, MAX_STR_LEN);
+        dst->timeToLive = src->timeToLive;
+        iface->neighborsCount++;
     }
+
+    node->interfacesCount++;
+}
 }

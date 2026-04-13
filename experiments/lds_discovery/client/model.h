@@ -31,12 +31,12 @@
 #define MAX_ASSETS               4
 #define MAX_CONN_ENDPOINTS       4
 #define MAX_AUTOMATION_COMPS      2
-#define MAX_NETWORK_INTERFACES    4
+#define MAX_NETWORK_INTERFACES    16
 #define MAX_LLDP_NEIGHBORS        8
 #define MAX_TOPOLOGY_NODES       16
 #define MAX_TOPOLOGY_LINKS       64
 #define MAX_DISCOVERY_QUEUE      32
-
+#define MAX_LOCAL_PORTS		 16
 /* ============================================================
  * DataVariable
  *
