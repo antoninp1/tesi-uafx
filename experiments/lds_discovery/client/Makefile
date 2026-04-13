@@ -14,7 +14,7 @@ LDFLAGS = -pthread
 
 TARGET  = discovery_client
 
-SRCS    = main.c browse.c discovery.c helpers.c model.c tde.c cJSON.c open62541.c
+SRCS    = main.c browse.c discovery.c helpers.c model.c tde.c link_builder.c cJSON.c open62541.c
 OBJS    = $(SRCS:.c=.o)
 
 .PHONY: all clean
@@ -31,6 +31,7 @@ discovery.o: discovery.c discovery.h common.h
 helpers.o:   helpers.c helpers.h common.h
 model.o:     model.c model.h common.h
 tde.o:       tde.c tde.h model.h common.h cJSON.h
+link_builder.o: link_builder.c link_builder.h model.h
 cJSON.o:     cJSON.c cJSON.h
 	$(CC) -std=c99 -Wno-unused-parameter -c -o $@ $<
 open62541.o: open62541.c open62541.h

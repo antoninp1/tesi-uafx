@@ -277,13 +277,17 @@ void topologyGraphPrint(const TopologyGraph *graph) {
     if(graph->linksCount > 0) {
         printf("\n  --- Links ---\n");
         for(size_t i = 0; i < graph->linksCount; i++) {
-            const TopologyLink *l = &graph->links[i];
-            printf("  [Link %zu] %s:%s  <-->  %s:%s  %s\n",
-                   i,
-                   l->endpointA.chassisId, l->endpointA.portDescr,
-                   l->endpointB.chassisId, l->endpointB.portDescr,
-                   l->confirmedBidirectional ? "(confirmed)" : "(unidirectional)");
-        }
+    const TopologyLink *l = &graph->links[i];
+    const char *nameA = l->endpointA.sysName[0] ? l->endpointA.sysName
+                                                 : l->endpointA.chassisId;
+    const char *nameB = l->endpointB.sysName[0] ? l->endpointB.sysName
+                                                 : l->endpointB.chassisId;
+    printf("  [Link %zu] %s:%s  <-->  %s:%s  %s\n",
+           i,
+           nameA, l->endpointA.portDescr,
+           nameB, l->endpointB.portDescr,
+           l->confirmedBidirectional ? "(confirmed)" : "(unidirectional)");
+}
     }
 
     printf("\n========================================\n\n");

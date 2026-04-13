@@ -24,6 +24,7 @@
 #include "tde.h"
 #include <signal.h>
 #include <time.h>
+#include "link_builder.h"
 
 static volatile UA_Boolean running = true;
 
@@ -147,7 +148,7 @@ int main(int argc, char **argv) {
     UA_Client_delete(client);
 
     /* ═══════════════════════════════════════════════════════════
-     * FASE 2.5: BFS sui vicini via TDE
+     * FASE 3: BFS sui vicini via TDE
      *
      * Processa la coda dei vicini scoperti via LLDP. Per ognuno,
      * la TDE sceglie l'adapter giusto (SSH+lldpcli per Relyum,
@@ -155,7 +156,7 @@ int main(int argc, char **argv) {
      * I nuovi vicini scoperti vengono accodati a loro volta.
      * ═══════════════════════════════════════════════════════════ */
 
-    printSeparator("FASE 2.5: BFS via TDE");
+    printSeparator("FASE 3: BFS via TDE");
 
     DiscoveryQueueEntry entry;
     while(running && discoveryDequeue(&graph, &entry)) {
@@ -220,11 +221,20 @@ int main(int argc, char **argv) {
      * ═══════════════════════════════════════════════════════════ */
     graph.lastScanTime = time(NULL);
 
+
+/* ═══════════════════════════════════════════════════════════
+ * FASE 2.6: costruzione dei link fisici dai vicini LLDP
+ * ═══════════════════════════════════════════════════════════ */
+
+    printSeparator("FASE 4: Costruzione Links");
+    buildLinksFromNeighbors(&graph);	
+
+
     /* ═══════════════════════════════════════════════════════════
-     * FASE 3: Stampa il grafo popolato
+     * FASE 5: Stampa il grafo popolato
      * ═══════════════════════════════════════════════════════════ */
 
-    printSeparator("FASE 3: Modello popolato");
+    printSeparator("FASE 5: Modello popolato");
     topologyGraphPrint(&graph);
 
     /* Coda BFS rimanente (verra' processata in iterazioni future) */

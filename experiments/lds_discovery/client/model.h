@@ -287,7 +287,8 @@ typedef struct {
  * ============================================================ */
 
 typedef struct {
-    char chassisId[MAX_STR_LEN];    /* ChassisId del nodo */
+    char chassisId[MAX_STR_LEN];
+    char sysName[MAX_STR_LEN];    /* ChassisId del nodo */
     char portId[MAX_STR_LEN];       /* PortId della porta */
     char portDescr[MAX_STR_LEN];    /* PortDescr (human-readable) */
     int  nodeIndex;                  /* indice nel TopologyGraph.nodes[] */
