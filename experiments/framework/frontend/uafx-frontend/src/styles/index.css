@@ -1,0 +1,747 @@
+/* ============================================================
+ * UAFX Frontend - Global Styles
+ * ============================================================ */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+               'Helvetica Neue', Arial, sans-serif;
+  font-size: 14px;
+  color: #1f2937;
+  background: #f8fafc;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  outline: none;
+}
+
+input {
+  font-family: inherit;
+  outline: none;
+}
+
+/* ============================================================
+ * Welcome Screen
+ * ============================================================ */
+
+.welcome-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+  padding: 20px;
+}
+
+.welcome-card {
+  background: white;
+  border-radius: 16px;
+  padding: 48px 40px;
+  max-width: 480px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+}
+
+.welcome-card h1 {
+  font-size: 28px;
+  font-weight: 700;
+  color: #1e3a8a;
+  margin-bottom: 12px;
+}
+
+.welcome-card .subtitle {
+  font-size: 15px;
+  color: #6b7280;
+  margin-bottom: 32px;
+  line-height: 1.5;
+}
+
+.welcome-card .hint {
+  font-size: 12px;
+  color: #9ca3af;
+  margin-top: 24px;
+}
+
+.error-banner {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin-top: 20px;
+  font-size: 13px;
+  text-align: left;
+}
+
+/* ============================================================
+ * Buttons
+ * ============================================================ */
+
+.primary-button {
+  background: #3b82f6;
+  color: white;
+  font-size: 16px;
+  font-weight: 600;
+  padding: 14px 32px;
+  border-radius: 8px;
+  transition: background 0.2s;
+}
+
+.primary-button:hover {
+  background: #2563eb;
+}
+
+.primary-button:active {
+  background: #1d4ed8;
+}
+
+.secondary-button {
+  background: #f3f4f6;
+  color: #374151;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 12px 24px;
+  border-radius: 8px;
+  transition: background 0.2s;
+}
+
+.secondary-button:hover {
+  background: #e5e7eb;
+}
+
+.icon-button {
+  background: transparent;
+  color: #6b7280;
+  font-size: 24px;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.icon-button:hover {
+  background: #f3f4f6;
+  color: #1f2937;
+}
+
+/* ============================================================
+ * Modal Dialog
+ * ============================================================ */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+  animation: fadeIn 0.15s ease-out;
+}
+
+.modal-card {
+  background: white;
+  border-radius: 12px;
+  padding: 32px;
+  max-width: 440px;
+  width: 100%;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  animation: slideUp 0.2s ease-out;
+}
+
+.modal-card h2 {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1f2937;
+  margin-bottom: 8px;
+}
+
+.modal-description {
+  font-size: 13px;
+  color: #6b7280;
+  margin-bottom: 24px;
+  line-height: 1.5;
+}
+
+.form-field {
+  margin-bottom: 16px;
+}
+
+.form-field label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: #374151;
+  margin-bottom: 6px;
+}
+
+.form-field input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.form-field input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.validation-error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: 24px;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ============================================================
+ * Loading Overlay
+ * ============================================================ */
+
+.loading-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.95);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  backdrop-filter: blur(4px);
+}
+
+.loading-card {
+  text-align: center;
+  padding: 32px;
+}
+
+.loading-card p {
+  margin-top: 20px;
+  font-size: 14px;
+  color: #4b5563;
+}
+
+.spinner {
+  width: 48px;
+  height: 48px;
+  border: 4px solid #e5e7eb;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  margin: 0 auto;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ============================================================
+ * Topology Screen Layout
+ * ============================================================ */
+
+.topology-screen {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #f8fafc;
+}
+
+.app-header {
+  background: white;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.app-header h1 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1e3a8a;
+}
+
+.header-info {
+  display: flex;
+  gap: 24px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+/* ============================================================
+ * Tab Bar
+ * ============================================================ */
+
+.tab-bar {
+  display: flex;
+  background: white;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 0 24px;
+}
+
+.tab {
+  background: transparent;
+  padding: 14px 24px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #6b7280;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+}
+
+.tab:hover {
+  color: #374151;
+}
+
+.tab.active {
+  color: #3b82f6;
+  border-bottom-color: #3b82f6;
+}
+
+/* ============================================================
+ * Toolbar
+ * ============================================================ */
+
+.toolbar {
+  background: white;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 8px 24px;
+  display: flex;
+  gap: 8px;
+}
+
+.toolbar-button {
+  background: #f3f4f6;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 14px;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+
+.toolbar-button:hover {
+  background: #e5e7eb;
+}
+
+/* ============================================================
+ * Graph Container
+ * ============================================================ */
+
+.graph-container {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+}
+
+.react-flow {
+  background: #f8fafc;
+}
+
+/* ============================================================
+ * Detail Panel
+ * ============================================================ */
+
+.detail-panel {
+  width: 360px;
+  background: white;
+  border-left: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.05);
+  animation: slideInRight 0.2s ease-out;
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.detail-header h3 {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f2937;
+  word-break: break-all;
+}
+
+.detail-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+}
+
+.detail-section {
+  margin-bottom: 24px;
+}
+
+.detail-section h4 {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.detail-field {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  font-size: 13px;
+  gap: 12px;
+}
+
+.detail-label {
+  color: #6b7280;
+  flex-shrink: 0;
+}
+
+.detail-value {
+  color: #1f2937;
+  font-weight: 500;
+  text-align: right;
+  word-break: break-all;
+}
+
+.nested-item {
+  padding: 8px 12px;
+  background: #f9fafb;
+  border-radius: 6px;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.nested-item strong {
+  display: block;
+  color: #1f2937;
+  margin-bottom: 2px;
+}
+
+.subtle {
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+/* ============================================================
+ * Custom Nodes - Common
+ * ============================================================ */
+
+.node {
+  position: relative;  
+  background: white;
+  border-radius: 10px;
+  padding: 14px;
+  min-width: 220px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  border: 2px solid;
+  transition: transform 0.15s, box-shadow 0.15s;
+  font-size: 13px;
+}
+
+.node:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+}
+
+.node-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.node-icon {
+  font-size: 24px;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.node-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
+  word-break: break-word;
+}
+
+.node-subtitle {
+  font-size: 11px;
+  color: #6b7280;
+  margin-top: 2px;
+}
+
+.node-meta {
+  font-size: 11px;
+  color: #6b7280;
+  background: #f9fafb;
+  padding: 4px 8px;
+  border-radius: 4px;
+  margin-top: 8px;
+  font-family: 'Courier New', monospace;
+}
+
+/* ============================================================
+ * UAFX Server Node
+ * ============================================================ */
+
+.node-uafx {
+  border-color: #3b82f6;
+}
+
+.node-uafx .node-icon {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.node-ports {
+  margin-top: 12px;
+  border-top: 1px solid #f3f4f6;
+  padding-top: 8px;
+}
+
+.node-port {
+  position: relative;
+  padding: 4px 0;
+  font-size: 11px;
+  color: #4b5563;
+  font-family: 'Courier New', monospace;
+}
+
+/* ============================================================
+ * Switch Node
+ * ============================================================ */
+
+.node-switch {
+  border-color: #10b981;
+  min-width: 280px;
+}
+
+.node-switch .node-icon {
+  background: #d1fae5;
+  color: #047857;
+}
+
+.node-ports-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-top: 12px;
+  border-top: 1px solid #f3f4f6;
+  padding-top: 10px;
+}
+
+.node-port-chip {
+  position: relative;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-family: 'Courier New', monospace;
+  color: #166534;
+  text-align: center;
+}
+
+/* ============================================================
+ * Phantom Node
+ * ============================================================ */
+
+.node-phantom {
+  border-color: #9ca3af;
+  border-style: dashed;
+  background: #f9fafb;
+  opacity: 0.85;
+}
+
+.node-phantom .node-icon {
+  background: #e5e7eb;
+  color: #6b7280;
+}
+
+.node-phantom .node-title {
+  color: #4b5563;
+}
+
+/* ============================================================
+ * Functional Entity Node
+ * Inputs in alto, Outputs in basso
+ * ============================================================ */
+
+.node-fe {
+  border-color: #8b5cf6;
+  min-width: 240px;
+  position: relative;
+  padding-top: 32px;     /* spazio per le label degli input in alto */
+  padding-bottom: 32px;  /* spazio per le label degli output in basso */
+}
+
+.node-fe .node-icon {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
+.fe-handles {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 24px;
+  pointer-events: none;
+}
+
+.fe-handles-top {
+  top: 0;
+}
+
+.fe-handles-bottom {
+  bottom: 0;
+}
+
+.fe-handle-label {
+  position: absolute;
+  font-size: 10px;
+  font-weight: 500;
+  color: #6d28d9;
+  background: #f5f3ff;
+  border: 1px solid #ddd6fe;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  font-family: 'Courier New', monospace;
+  transform: translateX(-50%);
+  pointer-events: auto;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fe-handle-label-top {
+  top: 4px;
+}
+
+.fe-handle-label-bottom {
+  bottom: 4px;
+}
+
+.fe-counts {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #f3f4f6;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.fe-count-in {
+  color: #059669;
+}
+
+.fe-count-out {
+  color: #d97706;
+}
+
+/* ============================================================
+ * React Flow overrides
+ * ============================================================ */
+
+.react-flow__handle {
+  width: 8px;
+  height: 8px;
+  background: #3b82f6;
+  border: 2px solid white;
+}
+
+.node-fe .react-flow__handle {
+  background: #8b5cf6;
+}
+
+.node-switch .react-flow__handle {
+  background: #10b981;
+}
+
+.node-phantom .react-flow__handle {
+  background: #9ca3af;
+}
+
+.react-flow__edge-text {
+  font-family: 'Courier New', monospace;
+  fill: #4b5563;
+}
+
+.react-flow__edge-textbg {
+  fill: white;
+  fill-opacity: 0.9;
+}
+
+.react-flow__minimap {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+}
+
+.react-flow__controls {
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.react-flow__controls-button {
+  background: white;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.react-flow__controls-button:hover {
+  background: #f9fafb;
+}
