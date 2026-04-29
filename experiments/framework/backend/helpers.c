@@ -132,7 +132,10 @@ UA_BrowseResponse browseNode(UA_Client *client, UA_NodeId nodeId,
     bReq->nodesToBrowseSize = 1;
     bReq->nodesToBrowse[0].nodeId = nodeId;
     bReq->nodesToBrowse[0].browseDirection = UA_BROWSEDIRECTION_FORWARD;
+    bReq->nodesToBrowse[0].includeSubtypes = UA_TRUE;
+    bReq->nodesToBrowse[0].referenceTypeId =
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HIERARCHICALREFERENCES);
     bReq->nodesToBrowse[0].resultMask = UA_BROWSERESULTMASK_ALL;
-
+    bReq->nodesToBrowse[0].nodeClassMask = UA_NODECLASS_OBJECT | UA_NODECLASS_VARIABLE;
     return UA_Client_Service_browse(client, *bReq);
 }

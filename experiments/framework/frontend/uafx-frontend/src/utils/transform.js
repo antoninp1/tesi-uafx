@@ -63,13 +63,13 @@ export function transformLogical(logical) {
 
   const rfEdges = (logical.links || []).map((link) => ({
     id: link.id,
-    source: link.source,
-    target: link.target,
-    sourceHandle: link.sourceHandle,
-    targetHandle: link.targetHandle,
+    source: link.publisherFE  || link.source,
+    target: link.subscriberFE || link.target,
+    sourceHandle: link.outputVariable || link.sourceHandle,
+    targetHandle: link.inputVariable  || link.targetHandle,
     type: 'default',
     animated: true,
-    style: { stroke: '#8b5cf6', strokeWidth: 2 },
+    style: { stroke: '#22c55e', strokeWidth: 2 },
   }));
 
   // Layout top-bottom per la vista logica (input in alto → output in basso)

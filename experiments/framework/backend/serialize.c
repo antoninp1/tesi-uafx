@@ -334,7 +334,26 @@ static cJSON *buildLogicalView(const TopologyGraph *graph) {
     }
 
     /* llinks resta vuoto: le connessioni PubSub arriveranno in fase 2 */
-    (void)llinks;
+    /* ── connessione statica di test ─────────────────────────
+ * Rimuovere quando correlateConnections() sarà implementato.
+ * I due feId devono corrispondere agli id dei nodi logici
+ * già presenti nell'array nodes sopra.                    */
+cJSON *testConn = cJSON_CreateObject();
+cJSON_AddStringToObject(testConn, "id",
+    "test_conn_1");
+cJSON_AddStringToObject(testConn, "publisherFE",
+    "00:07:32:ae:79:13/TemperatureSensor/TemperatureReadingFE");
+cJSON_AddStringToObject(testConn, "subscriberFE",
+    "00:07:32:ae:79:1d/DensitySensor/DensityReadingFE");
+cJSON_AddStringToObject(testConn, "outputVariable",
+    "output-Temperature");
+cJSON_AddStringToObject(testConn, "inputVariable",
+    "input-ReceivedTemperature");
+cJSON_AddNumberToObject(testConn, "publisherEndpointStatus",  3);
+cJSON_AddNumberToObject(testConn, "subscriberEndpointStatus", 2);
+cJSON_AddNumberToObject(testConn, "publishingInterval",       5000.0);
+cJSON_AddBoolToObject  (testConn, "existing",                 true);
+cJSON_AddItemToArray(llinks, testConn);
 
     return logical;
 }
