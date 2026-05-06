@@ -195,6 +195,47 @@ static bool runFullDiscovery(TopologyGraph *graph, const char *gdsUrl) {
     return true;
 }
 
+/*Creazione PubSub Dinamica*/
+bool triggerServerStart(const char *endpointUrl, const char *methodName, const char *acName) {
+    UA_Client *client = UA_Client_new();
+    UA_ClientConfig_setDefault(UA_Client_getConfig(client));
+
+    UA_StatusCode rc = UA_Client_connect(client, endpointUrl);
+    if(rc != UA_STATUSCODE_GOOD) {
+        printf("[CM] Cannot connect to %s: %s\n",
+               endpointUrl, UA_StatusCode_name(rc));
+        UA_Client_delete(client);
+        return false;
+    }
+
+    /* naviga: Objects → FxRoot → TemperatureSensor → metodo */
+    UA_NodeId objectsFolder = UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER);
+    UA_NodeId fxRoot        = resolveChildByName(client, objectsFolder, "FxRoot");
+    UA_NodeId acNode        = resolveChildByName(client, fxRoot, acName);
+    UA_NodeId methodNodeId  = resolveChildByName(client, acNode, methodName);
+
+    if(UA_NodeId_isNull(&methodNodeId)) {
+        printf("[CM] Method '%s' not found\n", methodName);
+        return false;
+    }
+
+    /* chiama il metodo senza argomenti */
+    size_t outputSize = 0;
+    UA_Variant *output = NULL;
+    rc = UA_Client_call(client,
+                        acNode, methodNodeId,
+                        0, NULL,
+                        &outputSize, &output);
+
+    printf("[CM] %s on %s: %s\n",
+           methodName, endpointUrl, UA_StatusCode_name(rc));
+
+    UA_Array_delete(output, outputSize, &UA_TYPES[UA_TYPES_VARIANT]);
+    UA_Client_disconnect(client);
+    UA_Client_delete(client);
+    return rc == UA_STATUSCODE_GOOD;
+}
+
 /* ============================================================
  * Handler degli endpoint
  * ============================================================ */
@@ -342,7 +383,7 @@ static void routeRequest(struct mg_connection *c, struct mg_http_message *hm) {
         return;
     }
 
-    /* ─── GET /api/devices/* ──────────────────────────── */
+    /* ─── GET /api/devices/{id} ──────────────────────────── */
     if(mg_strcmp(method, mg_str("GET")) == 0 &&
        mg_match(uri, mg_str("/api/devices/#"), NULL)) {
         /* Check se e' un sotto-path speciale */
@@ -355,9 +396,9 @@ static void routeRequest(struct mg_connection *c, struct mg_http_message *hm) {
     }
 
     /* ─── Fase 2: PubSub connections ──────────────────── */
-    if(mg_match(uri, mg_str("/api/connections"), NULL) ||
-       mg_match(uri, mg_str("/api/connections/#"), NULL)) {
-        replyNotImplemented(c, "2 (PubSub)");
+    if(mg_match(uri, mg_str("/api/connections/test"), NULL)){
+        triggerServerStart("opc.tcp://192.168.17.73:4841", "StartPublisher", "TemperatureSensor");
+	    triggerServerStart("opc.tcp://192.168.17.184:4841", "StartSubscriber",  "DensitySensor");
         return;
     }
 

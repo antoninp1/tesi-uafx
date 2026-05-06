@@ -67,5 +67,13 @@ void browseLldpData(UA_Client *client, UA_NodeId lldpFolderNodeId,
 void browseLldpRemoteSystem(UA_Client *client, UA_NodeId rsNodeId,
                             const char *rsName, const char *indent,
                             LldpNeighbor *neighbor);
-
+/* ============================================================
+ * resolveChildByName
+ *
+ * Esegue un browse dei figli di parentId e restituisce il NodeId
+ * del primo figlio con browseName uguale a name.
+ * ============================================================ */
+UA_NodeId resolveChildByName(UA_Client *client,
+                              UA_NodeId parentId,
+                              const char *name);
 #endif /* UAFX_BROWSE_H */

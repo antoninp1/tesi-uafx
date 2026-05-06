@@ -28,6 +28,56 @@ static void readStringInto(UA_Client *client, UA_NodeId parent,
 }
 
 /* ============================================================
+ * resolveChildByName
+ *
+ * Esegue un browse dei figli di parentId e restituisce il NodeId
+ * del primo figlio con browseName uguale a name.
+ * ============================================================ */
+
+UA_NodeId resolveChildByName(UA_Client *client,
+                              UA_NodeId parentId,
+                              const char *name) {
+    UA_BrowseRequest req;
+    UA_BrowseRequest_init(&req);
+    req.requestedMaxReferencesPerNode = 0;
+    req.nodesToBrowse = UA_BrowseDescription_new();
+    req.nodesToBrowseSize = 1;
+    req.nodesToBrowse[0].nodeId = parentId;
+    req.nodesToBrowse[0].browseDirection = UA_BROWSEDIRECTION_FORWARD;
+    req.nodesToBrowse[0].referenceTypeId =
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HIERARCHICALREFERENCES);
+    req.nodesToBrowse[0].includeSubtypes = true;
+    req.nodesToBrowse[0].resultMask = UA_BROWSERESULTMASK_BROWSENAME;
+
+    UA_BrowseResponse resp = UA_Client_Service_browse(client, req);
+    UA_BrowseRequest_clear(&req);
+
+    UA_NodeId result = UA_NODEID_NULL;
+
+    if(resp.responseHeader.serviceResult != UA_STATUSCODE_GOOD ||
+       resp.resultsSize == 0) {
+        UA_BrowseResponse_clear(&resp);
+        return result;
+    }
+
+    for(size_t i = 0; i < resp.results[0].referencesSize; i++) {
+        UA_ReferenceDescription *ref = &resp.results[0].references[i];
+        char refName[256] = {0};
+        snprintf(refName, sizeof(refName), "%.*s",
+                 (int)ref->browseName.name.length,
+                 ref->browseName.name.data);
+
+        if(strcmp(refName, name) == 0) {
+            UA_NodeId_copy(&ref->nodeId.nodeId, &result);
+            break;
+        }
+    }
+
+    UA_BrowseResponse_clear(&resp);
+    return result;
+}
+
+/* ============================================================
  * browseDataFolder
  *
  * Stampa le variabili e le inserisce in vars[].

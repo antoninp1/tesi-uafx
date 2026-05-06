@@ -339,116 +339,6 @@ static void buildNetworkInterfaces(UA_Server *server) {
     printf("[SERVER] + NetworkInterfaces: enp43s0, enp0s31f6, wlp44s0\n");
     printf("[SERVER]   ChassisId (shared): 00:07:32:ae:79:1d\n\n");
 }
-/* ═══════════════════════════════════════════════════════════
- * Build UAFX AddressSpace
- *
- * Objects/
- *   +-- FxRoot/
- *   |   +-- TemperatureSensor/  [AutomationComponentType]
- *   |       +-- Assets/
- *   |       |   +-- SensorHardware/  [FxAssetType]
- *   |       +-- FunctionalEntities/
- *   |       |   +-- TemperatureReadingFE/  [FunctionalEntityType]
- *   |       |       +-- OutputData/Temperature (dynamic)
- *   |       |       +-- ConnectionEndpoints/
- *   |       +-- ComponentCapabilities/
- *   +-- NetworkInterfaces/
- *       +-- enp0s31f6/
- *           +-- LldpData/
- *               +-- LocalSystemData/
- *               +-- RemoteSystemsData/
- *                   +-- RemoteSystem_1/ (RELY-10TSN12)
- * ═══════════════════════════════════════════════════════════ */
-
-static void buildUAFXAddressSpace(UA_Server *server) {
-    printf("[SERVER] Building UAFX AddressSpace...\n");
-
-    UA_UInt16 nsFxAc = resolveNamespaceIndex(server, FXAC_NS_URI);
-    printf("[SERVER]   Namespace FX/AC resolved: %d\n", nsFxAc);
-
-    if(nsFxAc == 0) {
-        printf("[SERVER] ERROR: FX/AC namespace not found. "
-               "Did you call my_uafx_model() before buildUAFXAddressSpace()?\n");
-        return;
-    }
-
-    /* ─── 1. FxRoot ──────────────────────────────────────────── */
-    UA_NodeId objectsFolder = UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER);
-    UA_NodeId fxRoot = addFolder(server, objectsFolder, nsFxAc, "FxRoot");
-    printf("[SERVER]   + FxRoot created\n");
-
-    /* ─── 2. AutomationComponent: TemperatureSensor ──────────── */
-    UA_NodeId acNode = addTypedObject(server, fxRoot,
-                                      NS_LOCAL, "DensitySensor",
-                                      "Density Sensor AutomationComponent",
-                                      nsFxAc, FXAC_ID_AUTOMATIONCOMPONENTTYPE);
-    printf("[SERVER]   + AutomationComponent: DensitySensor "
-           "[AutomationComponentType ns=%d;i=%d]\n",
-           nsFxAc, FXAC_ID_AUTOMATIONCOMPONENTTYPE);
-
-    addStringVariable(server, acNode, NS_LOCAL, "ConformanceName",
-                      "urn:example:uafx:density-sensor:v1.0");
-    addUInt32Variable(server, acNode, NS_LOCAL, "AggregatedHealth", 0);
-
-    /* ─── 3. Assets/ ─────────────────────────────────────────── */
-    UA_NodeId assetsFolder = addFolder(server, acNode, NS_LOCAL, "Assets");
-
-    UA_NodeId assetNode = addTypedObject(server, assetsFolder,
-                                         NS_LOCAL, "SensorHardware",
-                                         "Physical temperature sensor hardware",
-                                         nsFxAc, FXAC_ID_FXASSETTYPE);
-    printf("[SERVER]   + Asset: SensorHardware [FxAssetType ns=%d;i=%d]\n",
-           nsFxAc, FXAC_ID_FXASSETTYPE);
-
-    addStringVariable(server, assetNode, NS_LOCAL, "Manufacturer",      "AcmeCorp");
-    addStringVariable(server, assetNode, NS_LOCAL, "ManufacturerUri",   "https://www.acmecorp-sensors.com");
-    addStringVariable(server, assetNode, NS_LOCAL, "Model",             "DenSensor-1000");
-    addStringVariable(server, assetNode, NS_LOCAL, "ProductCode",       "TS-1000-V2");
-    addStringVariable(server, assetNode, NS_LOCAL, "HardwareRevision",  "2.0");
-    addStringVariable(server, assetNode, NS_LOCAL, "SoftwareRevision",  "1.3.5");
-    addStringVariable(server, assetNode, NS_LOCAL, "DeviceClass",       "DensitySensor");
-    addStringVariable(server, assetNode, NS_LOCAL, "SerialNumber",      "SN-12345-ABCD");
-
-    /* ─── 4. FunctionalEntities/ ─────────────────────────────── */
-    UA_NodeId feFolder = addFolder(server, acNode, NS_LOCAL, "FunctionalEntities");
-
-    UA_NodeId feNode = addTypedObject(server, feFolder,
-                                      NS_LOCAL, "DensityReadingFE",
-                                      "Density reading functional entity",
-                                      nsFxAc, FXAC_ID_FUNCTIONALENTITYTYPE);
-    printf("[SERVER]   + FunctionalEntity: DensityReadingFE "
-           "[FunctionalEntityType ns=%d;i=%d]\n",
-           nsFxAc, FXAC_ID_FUNCTIONALENTITYTYPE);
-
-    addStringVariable(server, feNode, NS_LOCAL, "AuthorUri",
-                      "https://www.acmecorp-sensors.com");
-    addStringVariable(server, feNode, NS_LOCAL, "AuthorAssignedIdentifier",
-                      "TempSensor-FE-v1.0");
-    addStringVariable(server, feNode, NS_LOCAL, "AuthorAssignedVersion",
-                      "1.0.0.0");
-
-    UA_NodeId outputFolder = addFolder(server, feNode, NS_LOCAL, "OutputData");
-    addDensityVariable(server, outputFolder, NS_LOCAL, "Density");
-    printf("[SERVER]     + OutputData/Density (dynamic)\n");
-
-    UA_NodeId inputFolder = addFolder(server, feNode, NS_LOCAL, "InputData");
-    addInputVariable(server,inputFolder, NS_LOCAL, "Temperature");
-    printf("[SERVER]   + InputData/ReceivedTemperature (target for PubSub subscriber)\n");
-
-
-    addFolder(server, feNode, NS_LOCAL, "ConnectionEndpoints");
-    addUInt32Variable(server, feNode, NS_LOCAL, "OperationalHealth", 0);
-
-    /* ─── 5. ComponentCapabilities/ ──────────────────────────── */
-    UA_NodeId capFolder = addFolder(server, acNode, NS_LOCAL, "ComponentCapabilities");
-    addUInt32Variable(server, capFolder, NS_LOCAL, "MaxConnections", 4);
-    addUInt32Variable(server, capFolder, NS_LOCAL, "MinConnections", 0);
-
-    printf("[SERVER] + UAFX AddressSpace build complete\n\n");
-
-    /* ─── 6. NetworkInterfaces con LLDP (Part 82, 6.5.2) ────── */
-    buildNetworkInterfaces(server);
-}
 
 static void setupSubscriber(UA_Server *server) {
     printf("[SERVER] Setting up PubSub Subscriber...\n");
@@ -557,6 +447,157 @@ static void setupSubscriber(UA_Server *server) {
     UA_Server_setReaderGroupOperational(server, rgId);
 }
 
+
+ /* callback eseguita quando il client chiama il metodo */
+static UA_StatusCode startSubscriberCallback(
+        UA_Server *server, const UA_NodeId *sessionId,
+        void *sessionContext, const UA_NodeId *methodId,
+        void *methodContext, const UA_NodeId *objectId,
+        void *objectContext, size_t inputSize,
+        const UA_Variant *input, size_t outputSize,
+        UA_Variant *output) {
+
+    printf("[SERVER] StartSubscriber called — configuring PubSub...\n");
+
+    /* chiama le funzioni già scritte nel server */
+    setupSubscriber(server);
+
+    printf("[SERVER] Subscriber started\n");
+    return UA_STATUSCODE_GOOD;
+}
+
+
+/* ═══════════════════════════════════════════════════════════
+ * Build UAFX AddressSpace
+ *
+ * Objects/
+ *   +-- FxRoot/
+ *   |   +-- TemperatureSensor/  [AutomationComponentType]
+ *   |       +-- Assets/
+ *   |       |   +-- SensorHardware/  [FxAssetType]
+ *   |       +-- FunctionalEntities/
+ *   |       |   +-- TemperatureReadingFE/  [FunctionalEntityType]
+ *   |       |       +-- OutputData/Temperature (dynamic)
+ *   |       |       +-- ConnectionEndpoints/
+ *   |       +-- ComponentCapabilities/
+ *   +-- NetworkInterfaces/
+ *       +-- enp0s31f6/
+ *           +-- LldpData/
+ *               +-- LocalSystemData/
+ *               +-- RemoteSystemsData/
+ *                   +-- RemoteSystem_1/ (RELY-10TSN12)
+ * ═══════════════════════════════════════════════════════════ */
+
+static void buildUAFXAddressSpace(UA_Server *server) {
+    printf("[SERVER] Building UAFX AddressSpace...\n");
+
+    UA_UInt16 nsFxAc = resolveNamespaceIndex(server, FXAC_NS_URI);
+    printf("[SERVER]   Namespace FX/AC resolved: %d\n", nsFxAc);
+
+    if(nsFxAc == 0) {
+        printf("[SERVER] ERROR: FX/AC namespace not found. "
+               "Did you call my_uafx_model() before buildUAFXAddressSpace()?\n");
+        return;
+    }
+
+    /* ─── 1. FxRoot ──────────────────────────────────────────── */
+    UA_NodeId objectsFolder = UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER);
+    UA_NodeId fxRoot = addFolder(server, objectsFolder, nsFxAc, "FxRoot");
+    printf("[SERVER]   + FxRoot created\n");
+
+    /* ─── 2. AutomationComponent: TemperatureSensor ──────────── */
+    UA_NodeId acNode = addTypedObject(server, fxRoot,
+                                      NS_LOCAL, "DensitySensor",
+                                      "Density Sensor AutomationComponent",
+                                      nsFxAc, FXAC_ID_AUTOMATIONCOMPONENTTYPE);
+    printf("[SERVER]   + AutomationComponent: DensitySensor "
+           "[AutomationComponentType ns=%d;i=%d]\n",
+           nsFxAc, FXAC_ID_AUTOMATIONCOMPONENTTYPE);
+
+    addStringVariable(server, acNode, NS_LOCAL, "ConformanceName",
+                      "urn:example:uafx:density-sensor:v1.0");
+    addUInt32Variable(server, acNode, NS_LOCAL, "AggregatedHealth", 0);
+
+
+  /*Aggiunta callback all'automation component*/
+UA_MethodAttributes methAttr = UA_MethodAttributes_default;
+methAttr.displayName = lt("StartSubscriber");
+methAttr.executable = true;
+methAttr.userExecutable = true;
+
+UA_Server_addMethodNode(server,
+    UA_NODEID_NULL,
+    acNode,                                        /* parent = AutomationComponent */
+    UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+    qn(NS_LOCAL, "StartSubscriber"),
+    methAttr,
+    startSubscriberCallback,
+    0, NULL,                                       /* no input args */
+    0, NULL,                                       /* no output args */
+    NULL, NULL);
+
+    /* ─── 3. Assets/ ─────────────────────────────────────────── */
+    UA_NodeId assetsFolder = addFolder(server, acNode, NS_LOCAL, "Assets");
+
+    UA_NodeId assetNode = addTypedObject(server, assetsFolder,
+                                         NS_LOCAL, "SensorHardware",
+                                         "Physical temperature sensor hardware",
+                                         nsFxAc, FXAC_ID_FXASSETTYPE);
+    printf("[SERVER]   + Asset: SensorHardware [FxAssetType ns=%d;i=%d]\n",
+           nsFxAc, FXAC_ID_FXASSETTYPE);
+
+    addStringVariable(server, assetNode, NS_LOCAL, "Manufacturer",      "AcmeCorp");
+    addStringVariable(server, assetNode, NS_LOCAL, "ManufacturerUri",   "https://www.acmecorp-sensors.com");
+    addStringVariable(server, assetNode, NS_LOCAL, "Model",             "DenSensor-1000");
+    addStringVariable(server, assetNode, NS_LOCAL, "ProductCode",       "TS-1000-V2");
+    addStringVariable(server, assetNode, NS_LOCAL, "HardwareRevision",  "2.0");
+    addStringVariable(server, assetNode, NS_LOCAL, "SoftwareRevision",  "1.3.5");
+    addStringVariable(server, assetNode, NS_LOCAL, "DeviceClass",       "DensitySensor");
+    addStringVariable(server, assetNode, NS_LOCAL, "SerialNumber",      "SN-12345-ABCD");
+
+    /* ─── 4. FunctionalEntities/ ─────────────────────────────── */
+    UA_NodeId feFolder = addFolder(server, acNode, NS_LOCAL, "FunctionalEntities");
+
+    UA_NodeId feNode = addTypedObject(server, feFolder,
+                                      NS_LOCAL, "DensityReadingFE",
+                                      "Density reading functional entity",
+                                      nsFxAc, FXAC_ID_FUNCTIONALENTITYTYPE);
+    printf("[SERVER]   + FunctionalEntity: DensityReadingFE "
+           "[FunctionalEntityType ns=%d;i=%d]\n",
+           nsFxAc, FXAC_ID_FUNCTIONALENTITYTYPE);
+
+    addStringVariable(server, feNode, NS_LOCAL, "AuthorUri",
+                      "https://www.acmecorp-sensors.com");
+    addStringVariable(server, feNode, NS_LOCAL, "AuthorAssignedIdentifier",
+                      "TempSensor-FE-v1.0");
+    addStringVariable(server, feNode, NS_LOCAL, "AuthorAssignedVersion",
+                      "1.0.0.0");
+
+    UA_NodeId outputFolder = addFolder(server, feNode, NS_LOCAL, "OutputData");
+    addDensityVariable(server, outputFolder, NS_LOCAL, "Density");
+    printf("[SERVER]     + OutputData/Density (dynamic)\n");
+
+    UA_NodeId inputFolder = addFolder(server, feNode, NS_LOCAL, "InputData");
+    addInputVariable(server,inputFolder, NS_LOCAL, "Temperature");
+    printf("[SERVER]   + InputData/ReceivedTemperature (target for PubSub subscriber)\n");
+
+
+    addFolder(server, feNode, NS_LOCAL, "ConnectionEndpoints");
+    addUInt32Variable(server, feNode, NS_LOCAL, "OperationalHealth", 0);
+
+    /* ─── 5. ComponentCapabilities/ ──────────────────────────── */
+    UA_NodeId capFolder = addFolder(server, acNode, NS_LOCAL, "ComponentCapabilities");
+    addUInt32Variable(server, capFolder, NS_LOCAL, "MaxConnections", 4);
+    addUInt32Variable(server, capFolder, NS_LOCAL, "MinConnections", 0);
+
+    printf("[SERVER] + UAFX AddressSpace build complete\n\n");
+
+    /* ─── 6. NetworkInterfaces con LLDP (Part 82, 6.5.2) ────── */
+    buildNetworkInterfaces(server);
+}
+
+
+
 /* ═══════════════════════════════════════════════════════════
  * MAIN
  * ═══════════════════════════════════════════════════════════ */
@@ -650,7 +691,7 @@ int main(void) {
         return EXIT_FAILURE;
     }
         /* Costruzione sub statico*/
-        setupSubscriber(server);
+        //setupSubscriber(server);
 
 
     /* ─── Registrazione all'LDS ──────────────────────────────── */
