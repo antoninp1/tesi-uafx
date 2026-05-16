@@ -1,0 +1,9 @@
+1)Durante la creazione dei server vengono create 2 cartelle per automation component e 2 per fe risolvere
+
+2) Spostare la cartella della network interface all'interno dell'oggetto server nell'albero 
+
+3) Modificare il browse in maniera tale da poter recuperare i node id degli automation component e delle fe che saranno importanti nel pub sub e modificare di conseguenza il model.h/c 
+
+4) Modificare il connectionManager in maniera tale da utilizzare l'id dell'automation component al posto di trovare l'automation component dallo chassis id che può essere condiviso da più ac
+
+5) Modificare l'id del logical node in maniera tale da inserire.

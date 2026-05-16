@@ -286,9 +286,12 @@ void browseFunctionalEntity(UA_Client *client, UA_NodeId feNodeId,
                                          ce->browseName.name.data);
                                 printf("          +-- %s\n", ceName);
 
-                                if(fe && fe->connectionEndpointsCount < MAX_CONN_ENDPOINTS) {
-                                    safeStrCopy(fe->connectionEndpoints[fe->connectionEndpointsCount],
-                                                ceName, MAX_STR_LEN);
+                               if(fe && fe->connectionEndpointsCount < MAX_CONN_ENDPOINTS) {
+                                    ConnectionEndpoint *ceInfo =
+                                        &fe->connectionEndpoints[fe->connectionEndpointsCount];
+                                    memset(ceInfo, 0, sizeof(ConnectionEndpoint));
+                                    safeStrCopy(ceInfo->name, ceName, MAX_STR_LEN);
+                                    UA_NodeId_copy(&ce->nodeId.nodeId, &ceInfo->nodeId);
                                     fe->connectionEndpointsCount++;
                                 }
                             }

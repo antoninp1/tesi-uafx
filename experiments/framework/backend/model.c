@@ -292,3 +292,14 @@ void topologyGraphPrint(const TopologyGraph *graph) {
 
     printf("\n========================================\n\n");
 }
+
+int topologyAddLogicalConnection(TopologyGraph *graph,
+                                  const PubSubConnection *conn) {
+    if(graph->connectionsCount >= MAX_LOGICAL_CONNECTIONS)
+        return -1;
+
+    size_t idx = graph->connectionsCount;
+    graph->connections[idx] = *conn;
+    graph->connectionsCount++;
+    return (int)idx;
+}

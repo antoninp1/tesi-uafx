@@ -17,8 +17,7 @@
 
 static void timeToIso8601(time_t t, char *buf, size_t bufSize) {
     if(t == 0) {
-        snprintf(buf, bufSize, "");
-        return;
+        buf[0] = '\0';        return;
     }
     struct tm *tm = gmtime(&t);
     strftime(buf, bufSize, "%Y-%m-%dT%H:%M:%SZ", tm);
@@ -101,8 +100,7 @@ static cJSON *functionalEntityToJson(const FunctionalEntity *fe) {
 
     cJSON *ceps = cJSON_AddArrayToObject(obj, "connectionEndpoints");
     for(size_t i = 0; i < fe->connectionEndpointsCount; i++)
-        cJSON_AddItemToArray(ceps, cJSON_CreateString(fe->connectionEndpoints[i]));
-
+    cJSON_AddItemToArray(ceps, cJSON_CreateString(fe->connectionEndpoints[i].name));
     return obj;
 }
 

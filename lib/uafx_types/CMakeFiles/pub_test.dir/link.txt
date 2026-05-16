@@ -1,0 +1,1 @@
+/usr/bin/cc CMakeFiles/pub_test.dir/pub_test.c.o CMakeFiles/pub_test.dir/open62541.c.o CMakeFiles/pub_test.dir/types_di_generated.c.o CMakeFiles/pub_test.dir/types_uafx_data_generated.c.o CMakeFiles/pub_test.dir/types_uafx_ac_generated.c.o CMakeFiles/pub_test.dir/my_uafx_model.c.o -o pub_test  -lpthread 

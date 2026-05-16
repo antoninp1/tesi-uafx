@@ -476,8 +476,8 @@ bool tdeQueryDevice(const DiscoveryQueueEntry *entry,
     /* Default: vendor non supportato */
     result->success = false;
     snprintf(result->errorMessage, MAX_STR_LEN,
-             "No TDE adapter for device '%s' (%s)",
-             entry->sysName, entry->mgmtAddress);
+             "No TDE adapter for device '%s'",
+             entry->sysName);
     printf("[TDE] %s\n", result->errorMessage);
     return false;
 }

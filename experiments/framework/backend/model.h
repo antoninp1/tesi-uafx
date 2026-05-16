@@ -15,7 +15,7 @@
 
 #ifndef UAFX_MODEL_H
 #define UAFX_MODEL_H
-
+#include "open62541.h"
 #include "common.h"
 #include <stdbool.h>
 
@@ -35,6 +35,7 @@
 #define MAX_LLDP_NEIGHBORS        8
 #define MAX_TOPOLOGY_NODES       16
 #define MAX_TOPOLOGY_LINKS       64
+#define MAX_LOGICAL_CONNECTIONS  32
 #define MAX_DISCOVERY_QUEUE      32
 #define MAX_LOCAL_PORTS		 16
 /* ============================================================
@@ -70,6 +71,42 @@ typedef struct {
 } DataVariable;
 
 /* ============================================================
+ * ConnectionEndpoint
+ *
+ * Rappresenta un ConnectionEndpoint UAFX (Part 81, 6.5).
+ * Popolato sia dal browse (Phase 1/3) sia da
+ * establishConnection (nuove connessioni da frontend).
+ * ============================================================ */
+
+
+
+typedef struct {
+    char      name[MAX_STR_LEN];
+    UA_NodeId nodeId;                        /* NodeId del CE sul server */
+
+    /* Ruolo — letto da Mode sul server */
+    uint32_t  mode;                          /* 0=Publisher 1=Subscriber 2=Both */
+
+    /* Stato operativo */
+    char      status[MAX_STR_LEN];           /* es. "Operational", "Ready" */
+    bool      isPersistent;
+
+    /* Partner — da RelatedEndpoint */
+    char      relatedEndpoint[MAX_STR_LEN];
+
+    /* URI del ConnectionManager che ha creato il CE */
+    char      connectionManagerUri[MAX_STR_LEN];
+
+    /* Variabile collegata (output per pub input per sub) */
+    char      linkedVariable[MAX_STR_LEN];
+
+
+    /* Reference ai nodi PubSub sul server */
+    UA_NodeId dataSetWriterRef;              /* ToDataSetWriter (Publisher) */
+    UA_NodeId dataSetReaderRef;              /* ToDataSetReader (Subscriber) */
+} ConnectionEndpoint;
+
+/* ============================================================
  * FunctionalEntity
  *
  * Entita' funzionale UAFX (Part 81, 6.4).
@@ -94,7 +131,7 @@ typedef struct {
     size_t       inputDataCount;
 
     /* ConnectionEndpoints (nomi dei CE presenti) */
-    char         connectionEndpoints[MAX_CONN_ENDPOINTS][MAX_STR_LEN];
+    ConnectionEndpoint         connectionEndpoints[MAX_CONN_ENDPOINTS];
     size_t       connectionEndpointsCount;
 } FunctionalEntity;
 
@@ -310,6 +347,24 @@ typedef struct {
 } TopologyLink;
 
 /* ============================================================
+ * PubSubConnection
+ *
+ * Connessione logica PubSub tra due ConnectionEndpoint.
+ * Popolata dal browse (Phase 3) o da establishConnection.
+ * ============================================================ */
+
+typedef struct {
+    ConnectionEndpoint pub;              /* CE lato Publisher */
+    ConnectionEndpoint sub;              /* CE lato Subscriber */
+
+    /* Parametri PubSub condivisi */
+    uint16_t  publisherId;
+    uint16_t  writerGroupId;
+    uint16_t  dataSetWriterId;
+    char      multicastUrl[MAX_STR_LEN];
+    double    publishingInterval;            /* ms */
+} PubSubConnection;
+/* ============================================================
  * DiscoveryQueueEntry
  *
  * Elemento della coda BFS per la discovery iterativa.
@@ -344,6 +399,8 @@ typedef struct {
     TopologyLink  links[MAX_TOPOLOGY_LINKS];
     size_t        linksCount;
 
+    PubSubConnection connections[MAX_LOGICAL_CONNECTIONS]; 
+    size_t           connectionsCount;             
     /* Coda BFS per discovery iterativa */
     DiscoveryQueueEntry queue[MAX_DISCOVERY_QUEUE];
     size_t              queueHead;  /* indice del prossimo da processare */
@@ -399,6 +456,12 @@ int topologyFindLink(const TopologyGraph *graph,
  * direzione, lo marca come confirmedBidirectional.
  * Restituisce l'indice del link. */
 int topologyAddLink(TopologyGraph *graph, const TopologyLink *link);
+
+/*Aggiunge una connessione logica al grafo. Restituisce l'indice della connessione
+ * oppure -1 se il grafo e' pieno. */
+
+int topologyAddLogicalConnection(TopologyGraph *graph,
+                                  const PubSubConnection *conn);
 
 /* ─── Coda BFS ───────────────────────────────────────────── */
 

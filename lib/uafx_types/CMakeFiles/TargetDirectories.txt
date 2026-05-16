@@ -1,0 +1,5 @@
+/home/mrinaldi/opcua_workspace/prove_opcua/tesi-uafx/experiments/discovery_fx/build/CMakeFiles/uafx_server.dir
+/home/mrinaldi/opcua_workspace/prove_opcua/tesi-uafx/experiments/discovery_fx/build/CMakeFiles/server_with_lds_reg.dir
+/home/mrinaldi/opcua_workspace/prove_opcua/tesi-uafx/experiments/discovery_fx/build/CMakeFiles/pub_test.dir
+/home/mrinaldi/opcua_workspace/prove_opcua/tesi-uafx/experiments/discovery_fx/build/CMakeFiles/edit_cache.dir
+/home/mrinaldi/opcua_workspace/prove_opcua/tesi-uafx/experiments/discovery_fx/build/CMakeFiles/rebuild_cache.dir
