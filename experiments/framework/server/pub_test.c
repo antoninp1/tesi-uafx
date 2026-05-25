@@ -1,3 +1,4 @@
+
 /* ============================================================
  * uafx_temperature_server.c
  *
@@ -18,6 +19,8 @@
 #include "types_uafx_data_generated.h"
 #include "types_uafx_ac_generated.h"
 #include "my_uafx_model.h"
+#include "establish_connection2.h"
+#include "establish_connection.h"
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -164,6 +167,32 @@ static UA_NodeId addUInt32Variable(UA_Server *server, UA_NodeId parent,
         UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), attr, NULL, &newNode);
 
     return newNode;
+}
+
+static UA_NodeId resolveChildByNameServer(UA_Server *server,
+                                           UA_NodeId parentId,
+                                           const char *name) {
+    UA_BrowseDescription bd;
+    UA_BrowseDescription_init(&bd);
+    bd.nodeId = parentId;
+    bd.browseDirection = UA_BROWSEDIRECTION_FORWARD;
+    bd.referenceTypeId = UA_NODEID_NUMERIC(0, UA_NS0ID_HIERARCHICALREFERENCES);
+    bd.includeSubtypes = true;
+    bd.resultMask = UA_BROWSERESULTMASK_BROWSENAME;
+
+    UA_BrowseResult br = UA_Server_browse(server, 0, &bd);
+    UA_NodeId result = UA_NODEID_NULL;
+
+    for(size_t i = 0; i < br.referencesSize; i++) {
+        UA_ReferenceDescription *ref = &br.references[i];
+        if(ref->browseName.name.length == strlen(name) &&
+           memcmp(ref->browseName.name.data, name, strlen(name)) == 0) {
+            UA_NodeId_copy(&ref->nodeId.nodeId, &result);
+            break;
+        }
+    }
+    UA_BrowseResult_clear(&br);
+    return result;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -327,7 +356,7 @@ static void buildNetworkInterfaces(UA_Server *server) {
 
 
 /* -----7. Pub Static implementation exemple  */
-        //addPubSubCOnnections
+	//addPubSubCOnnections
     static void addPubSubConnection(UA_Server *server, UA_String *transportProfile,
                     UA_NetworkAddressUrlDataType *networkAddressUrl){
       UA_PubSubConnectionConfig connectionConfig;
@@ -338,21 +367,21 @@ static void buildNetworkInterfaces(UA_Server *server) {
                          &UA_TYPES[UA_TYPES_NETWORKADDRESSURLDATATYPE]);
     /* Changed to static publisherId from random generation to identify
      * the publisher on Subscriber side */
-        connectionConfig.publisherIdType = UA_PUBLISHERIDTYPE_UINT16;
-        connectionConfig.publisherId.uint16 = 2234;
-        connectionConfig.enabled = true;
-        UA_Server_addPubSubConnection(server, &connectionConfig, &connectionIdent);
+    	connectionConfig.publisherIdType = UA_PUBLISHERIDTYPE_UINT16;
+    	connectionConfig.publisherId.uint16 = 2234;
+	connectionConfig.enabled = true;
+    	UA_Server_addPubSubConnection(server, &connectionConfig, &connectionIdent);
 }
 
      //addPublishedDataset
     static void addPublishedDataSet(UA_Server *server) {
-        /* The PublishedDataSetConfig contains all necessary public
-        * information for the creation of a new PublishedDataSet */
-        UA_PublishedDataSetConfig publishedDataSetConfig;
-        memset(&publishedDataSetConfig, 0, sizeof(UA_PublishedDataSetConfig));
-        publishedDataSetConfig.publishedDataSetType = UA_PUBSUB_DATASET_PUBLISHEDITEMS;
-        publishedDataSetConfig.name = UA_STRING("First PDS");
-        UA_Server_addPublishedDataSet(server, &publishedDataSetConfig, &publishedDataSetIdent);
+    	/* The PublishedDataSetConfig contains all necessary public
+    	* information for the creation of a new PublishedDataSet */
+    	UA_PublishedDataSetConfig publishedDataSetConfig;
+    	memset(&publishedDataSetConfig, 0, sizeof(UA_PublishedDataSetConfig));
+    	publishedDataSetConfig.publishedDataSetType = UA_PUBSUB_DATASET_PUBLISHEDITEMS;
+    	publishedDataSetConfig.name = UA_STRING("First PDS");
+    	UA_Server_addPublishedDataSet(server, &publishedDataSetConfig, &publishedDataSetIdent);
 }
 
 //AddDataSetField
@@ -371,7 +400,7 @@ static void addDataSetField(UA_Server *server) {
                               &dataSetFieldConfig, &dataSetFieldIdent);
 }
 
-        static void addWriterGroup(UA_Server *server) {
+	static void addWriterGroup(UA_Server *server) {
     /* Now we create a new WriterGroupConfig and add the group to the existing
      * PubSubConnection. */
     UA_WriterGroupConfig writerGroupConfig;
@@ -379,7 +408,7 @@ static void addDataSetField(UA_Server *server) {
     writerGroupConfig.name = UA_STRING("Demo WriterGroup");
     writerGroupConfig.publishingInterval = 5000;
     writerGroupConfig.writerGroupId = 100;
-    writerGroupConfig.enabled = true;
+    writerGroupConfig.enabled = true; 
     writerGroupConfig.encodingMimeType = UA_PUBSUB_ENCODING_UADP;
 
     /* Change message settings of writerGroup to send PublisherId,
@@ -442,6 +471,7 @@ static UA_StatusCode startPublisherCallback(
     return UA_STATUSCODE_GOOD;
 }
 
+
 /*========══════════════════════════════════════════════════════
  * Build UAFX AddressSpace
  *
@@ -464,63 +494,38 @@ static UA_StatusCode startPublisherCallback(
  * ═══════════════════════════════════════════════════════════ */
 
 static void buildUAFXAddressSpace(UA_Server *server) {
-    printf("[SERVER] Building UAFX AddressSpace...\n");
-
     UA_UInt16 nsFxAc = resolveNamespaceIndex(server, FXAC_NS_URI);
-    printf("[SERVER]   Namespace FX/AC resolved: %d\n", nsFxAc);
 
-    if(nsFxAc == 0) {
-        printf("[SERVER] ERROR: FX/AC namespace not found. "
-               "Did you call my_uafx_model() before buildUAFXAddressSpace()?\n");
-        return;
-    }
-
-    /* ─── 1. FxRoot ──────────────────────────────────────────── */
     UA_NodeId objectsFolder = UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER);
     UA_NodeId fxRoot = addFolder(server, objectsFolder, nsFxAc, "FxRoot");
-    printf("[SERVER]   + FxRoot created\n");
 
-    /* ─── 2. AutomationComponent: TemperatureSensor ──────────── */
+    /* Crea AC — questo istanzia automaticamente Assets/, FunctionalEntities/, ecc. */
     UA_NodeId acNode = addTypedObject(server, fxRoot,
                                       NS_LOCAL, "TemperatureSensor",
                                       "Temperature Sensor AutomationComponent",
                                       nsFxAc, FXAC_ID_AUTOMATIONCOMPONENTTYPE);
-    printf("[SERVER]   + AutomationComponent: TemperatureSensor "
-           "[AutomationComponentType ns=%d;i=%d]\n",
-           nsFxAc, FXAC_ID_AUTOMATIONCOMPONENTTYPE);
 
     addStringVariable(server, acNode, NS_LOCAL, "ConformanceName",
                       "urn:example:uafx:temperature-sensor:v1.0");
     addUInt32Variable(server, acNode, NS_LOCAL, "AggregatedHealth", 0);
 
-    /*Aggiunta callback all'automation component*/
-UA_MethodAttributes methAttr = UA_MethodAttributes_default;
-methAttr.displayName = lt("StartPublisher");
-methAttr.executable = true;
-methAttr.userExecutable = true;
+    /* Aggiunta metodi */
+    UA_MethodAttributes methAttr = UA_MethodAttributes_default;
+    methAttr.displayName = lt("StartPublisher");
+    methAttr.executable = true;
+    methAttr.userExecutable = true;
+    UA_Server_addMethodNode(server, UA_NODEID_NULL, acNode,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+        qn(NS_LOCAL, "StartPublisher"), methAttr,
+        startPublisherCallback, 0, NULL, 0, NULL, NULL, NULL);
+    registerEstablishConnectionsMethod(server, acNode);
 
-UA_Server_addMethodNode(server,
-    UA_NODEID_NULL,
-    acNode,                                        /* parent = AutomationComponent */
-    UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
-    qn(NS_LOCAL, "StartPublisher"),
-    methAttr,
-    startPublisherCallback,
-    0, NULL,                                       /* no input args */
-    0, NULL,                                       /* no output args */
-    NULL, NULL);
-
-
-    /* ─── 3. Assets/ ─────────────────────────────────────────── */
-    UA_NodeId assetsFolder = addFolder(server, acNode, NS_LOCAL, "Assets");
-
+    /* ── Trova Assets/ già creata dal tipo e popolala ── */
+    UA_NodeId assetsFolder = resolveChildByNameServer(server, acNode, "Assets");
     UA_NodeId assetNode = addTypedObject(server, assetsFolder,
                                          NS_LOCAL, "SensorHardware",
                                          "Physical temperature sensor hardware",
                                          nsFxAc, FXAC_ID_FXASSETTYPE);
-    printf("[SERVER]   + Asset: SensorHardware [FxAssetType ns=%d;i=%d]\n",
-           nsFxAc, FXAC_ID_FXASSETTYPE);
-
     addStringVariable(server, assetNode, NS_LOCAL, "Manufacturer",      "AcmeCorp");
     addStringVariable(server, assetNode, NS_LOCAL, "ManufacturerUri",   "https://www.acmecorp-sensors.com");
     addStringVariable(server, assetNode, NS_LOCAL, "Model",             "TempSensor-1000");
@@ -530,32 +535,31 @@ UA_Server_addMethodNode(server,
     addStringVariable(server, assetNode, NS_LOCAL, "DeviceClass",       "TemperatureSensor");
     addStringVariable(server, assetNode, NS_LOCAL, "SerialNumber",      "SN-12345-ABCD");
 
-    /* ─── 4. FunctionalEntities/ ─────────────────────────────── */
-    UA_NodeId feFolder = addFolder(server, acNode, NS_LOCAL, "FunctionalEntities");
-
+    /* ── Trova FunctionalEntities/ già creata dal tipo e popolala ── */
+    UA_NodeId feFolder = resolveChildByNameServer(server, acNode, "FunctionalEntities");
     UA_NodeId feNode = addTypedObject(server, feFolder,
                                       NS_LOCAL, "TemperatureReadingFE",
                                       "Temperature reading functional entity",
                                       nsFxAc, FXAC_ID_FUNCTIONALENTITYTYPE);
-    printf("[SERVER]   + FunctionalEntity: TemperatureReadingFE "
-           "[FunctionalEntityType ns=%d;i=%d]\n",
-           nsFxAc, FXAC_ID_FUNCTIONALENTITYTYPE);
-
     addStringVariable(server, feNode, NS_LOCAL, "AuthorUri",
                       "https://www.acmecorp-sensors.com");
     addStringVariable(server, feNode, NS_LOCAL, "AuthorAssignedIdentifier",
                       "TempSensor-FE-v1.0");
     addStringVariable(server, feNode, NS_LOCAL, "AuthorAssignedVersion",
                       "1.0.0.0");
-
-    UA_NodeId outputFolder = addFolder(server, feNode, NS_LOCAL, "OutputData");
-    temperatureNodeId = addTemperatureVariable(server, outputFolder, NS_LOCAL, "Temperature");
-    printf("[SERVER]     + OutputData/Temperature (dynamic)\n");
-
-    addFolder(server, feNode, NS_LOCAL, "ConnectionEndpoints");
     addUInt32Variable(server, feNode, NS_LOCAL, "OperationalHealth", 0);
 
-    /* ─── 5. ComponentCapabilities/ ──────────────────────────── */
+    /* ── Trova OutputData/ già creata dall'istanziazione di FunctionalEntityType ── */
+UA_NodeId outputFolder = addFolder(server, feNode, NS_LOCAL, "OutputData");
+    temperatureNodeId = addTemperatureVariable(server, outputFolder, NS_LOCAL, "Temperature");
+
+    UA_NodeId inputFolder = addFolder(server, feNode, NS_LOCAL, "InputData");
+   // addInputVariable(server,inputFolder, NS_LOCAL, "Density");
+   // printf("[SERVER]   + InputData/ReceivedTemperature (target for PubSub subscriber)\n");
+
+    addFolder(server, feNode, NS_LOCAL, "ConnectionEndpoints");
+
+    /* ───  ComponentCapabilities/ ──────────────────────────── */
     UA_NodeId capFolder = addFolder(server, acNode, NS_LOCAL, "ComponentCapabilities");
     addUInt32Variable(server, capFolder, NS_LOCAL, "MaxConnections", 4);
     addUInt32Variable(server, capFolder, NS_LOCAL, "MinConnections", 0);
@@ -564,9 +568,9 @@ UA_Server_addMethodNode(server,
 
     /* ─── 6. NetworkInterfaces con LLDP (Part 82, 6.5.2) ────── */
     buildNetworkInterfaces(server);
+
 }
-
-
+    
 
 
 
@@ -659,7 +663,7 @@ int main(void) {
 
 
 
-    /* Run the server */
+    /* Run the server */  
 
     /* ─── Avvia server ───────────────────────────────────────── */
     retval = UA_Server_run_startup(server);

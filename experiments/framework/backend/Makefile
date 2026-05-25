@@ -6,8 +6,8 @@
 #   - tipi UAFX generati in ../../lib/uafx_types/
 #
 # Uso:
-#   make            → compila backend
-#   make clean      → rimuove i file generati
+#   make          → compila backend
+#   make clean    → rimuove i file generati
 # ============================================================
 
 CC      = gcc
@@ -16,7 +16,7 @@ CC      = gcc
 UAFX_TYPES_DIR = ../../../lib/uafx_types
 OPEN62541_DIR = ../../../lib/
 
-CFLAGS  = -Wall -std=gnu99 -DUA_ENABLE_AMALGAMATION -I$(UAFX_TYPES_DIR) -I$(OPEN62541_DIR) 
+CFLAGS  = -Wall -std=gnu99 -DUA_ENABLE_AMALGAMATION -I$(UAFX_TYPES_DIR) -I$(OPEN62541_DIR)
 LDFLAGS = -pthread
 
 TARGET  = backend
@@ -72,6 +72,17 @@ open62541.o: open62541.c open62541.h
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
+# ── cm_test ───────────────────────────────────────────────────
+CM_TEST_SRCS = cm_test.c browse.c discovery.c helpers.c model.c tde.c \
+               link_builder.c serialize.c connection_manager.c \
+               cJSON.c mongoose.c open62541.c
 
+CM_TEST_OBJS = $(CM_TEST_SRCS:.c=.o)
+
+cm_test: $(CM_TEST_OBJS)
+	$(CC) $(CFLAGS) -o $@ $^ $(GENERATED_SRCS) $(LDFLAGS)
+
+clean:
+	rm -f $(OBJS) $(CM_TEST_OBJS) $(TARGET) cm_test
 clean:
 	rm -f $(OBJS) $(TARGET)

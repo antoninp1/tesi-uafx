@@ -26,14 +26,20 @@ typedef struct {
 typedef struct {
     /* Lato Publisher */
     char   publisherChassisId[64];
+    UA_NodeId publisherAcNodeId;
     char   publisherAcName[128];
+    UA_NodeId publisherFeNodeId;
     char   publisherFeName[128];
+    UA_NodeId publisherVariableNodeId;
     char   publisherVariable[128];
 
     /* Lato Subscriber */
     char   subscriberChassisId[64];
+    UA_NodeId subscriberAcNodeId;
     char   subscriberAcName[128];
+    UA_NodeId subscriberFeNodeId;
     char   subscriberFeName[128];
+    UA_NodeId subscriberVariableNodeId;
     char   subscriberVariable[128];
 
     /* Parametri PubSub */

@@ -29,6 +29,17 @@
 #define TRANSPORT_URI \
     "http://opcfoundation.org/UA-Profile/Transport/pubsub-udp-uadp"
 
+
+/* NodeId del PubSubConnectionEndpointType nel nodeset FX/AC.
+ * Lo standard fissa questo valore: ns=FX/AC; i=1005. */
+#define FXAC_PUBSUBCONNECTIONENDPOINTTYPE_ID  1005
+ 
+/* Forward: il chiamante deve risolvere a runtime il namespace index
+ * di FX/AC per costruire il NodeId corretto. Per semplicità qui
+ * usiamo ns=4 come default visto nel server pub_test (FX/AC=4).
+ * In una versione robusta andrebbe risolto via NamespaceArray. */
+#define FXAC_NAMESPACE_INDEX  4
+
 /* ── Generatore di ID univoci ────────────────────────────────── */
 /* Contatore statico — in produzione si userebbe
  * ReserveCommunicationIds sul server               */
@@ -55,42 +66,182 @@ buildCommandMask(void) {
 static UA_UInt16 s_multicastCounter = 1;
 
 static void buildMulticastUrl(char *buf, size_t bufLen) {
-    snprintf(buf, bufLen, "opc.udp://224.0.5.%u:4840/",
+    snprintf(buf, bufLen, "opc.udp://224.0.23.%u:4840/",
              s_multicastCounter++);
 }
 
 
 
+ 
+/* ============================================================
+ * buildEndpointConfiguration
+ *
+ * Costruisce una UA_ConnectionEndpointConfigurationDataType
+ * completa, pronta per essere serializzata nel param 2 del
+ * metodo EstablishConnections.
+ *
+ * @param ceName        Nome univoco del CE da creare (es. "CE_Pub_001")
+ * @param variableId    NodeId della variabile da legare al CE
+ *                      (OutputData se Publisher, InputData se Subscriber)
+ * @param isPublisher   true → Mode=Publisher(2), variableId in OutputVariableIds
+ *                      false → Mode=Subscriber(3), variableId in InputVariableIds
+ *
+ * Il chiamante deve liberare la struct con
+ * UA_ConnectionEndpointConfigurationDataType_clear(&cfg).
+ * ============================================================ */
 static UA_ConnectionEndpointConfigurationDataType
-buildEndpointConfiguration(
-    const char *endpointName,
-    const char *variableName,
-    bool isPublisher
-) {
+buildEndpointConfiguration(const char *ceName,
+                           UA_NodeId variableId,
+                           bool isPublisher) {
+ 
     UA_ConnectionEndpointConfigurationDataType cfg;
     memset(&cfg, 0, sizeof(cfg));
-
-    /* connectionEndpoint è una union discriminata:
-     * switchField=PARAMETER usa fields.parameter (ExtensionObject),
-     * switchField=NODE      usa fields.node (NodeId).
-     * Per ora lasciamo NONE — il server userà il functionalEntityNode. */
+ 
+    /* ═══════════════════════════════════════════════════════════
+     * 1. connectionEndpoint — switchField = PARAMETER
+     *
+     * La union ConnectionEndpointDefinitionDataType ha un solo
+     * Field nel nodeset (Parameter di tipo
+     * ConnectionEndpointParameterDataType, AllowSubTypes=true).
+     * Per "creare un nuovo CE" si setta switchField a PARAMETER
+     * e si popola fields.parameter con un ExtensionObject che
+     * wrappa il sottotipo concreto PubSubConnectionEndpointParameterDataType.
+     * ═══════════════════════════════════════════════════════════ */
+ 
     cfg.connectionEndpoint.switchField =
-        UA_CONNECTIONENDPOINTDEFINITIONDATATYPESWITCH_NONE;
-
-    /* communicationLinks è un UA_ExtensionObject che wrappa
-     * UA_PubSubCommunicationLinkConfigurationDataType */
+        UA_CONNECTIONENDPOINTDEFINITIONDATATYPESWITCH_PARAMETER;
+ 
+    /* Costruisci il PubSubConnectionEndpointParameterDataType.
+     * Eredita 8 campi da ConnectionEndpointParameterDataType:
+     *   Name, ConnectionEndpointTypeId, InputVariableIds,
+     *   OutputVariableIds, IsPersistent, CleanupTimeout,
+     *   RelatedEndpoint, IsPreconfigured.
+     * Aggiunge 1 campo proprio:
+     *   Mode (PubSubConnectionEndpointModeEnum) */
+    UA_PubSubConnectionEndpointParameterDataType *param =
+    UA_calloc(1, sizeof(UA_PubSubConnectionEndpointParameterDataType));
+    /* ── Campi ereditati da ConnectionEndpointParameterDataType ── */
+ 
+    /* Name: nome del CE da creare */
+    param->name = UA_STRING_ALLOC((char *)ceName);
+ 
+    /* ConnectionEndpointTypeId: ns=FX/AC;i=1005 (PubSubConnectionEndpointType) */
+    param->connectionEndpointTypeId =
+        UA_NODEID_NUMERIC(FXAC_NAMESPACE_INDEX,
+                          FXAC_PUBSUBCONNECTIONENDPOINTTYPE_ID);
+ 
+    /* InputVariableIds / OutputVariableIds:
+     * il Publisher pubblica una OutputVariable, il Subscriber
+     * scrive su una InputVariable. Esattamente una delle due lista
+     * ha un elemento, l'altra è vuota. */
+    if(isPublisher) {
+        param->outputVariableIdsSize = 1;
+        param->outputVariableIds = (UA_NodeId *)UA_calloc(1, sizeof(UA_NodeId));
+        UA_NodeId_copy(&variableId, &param->outputVariableIds[0]);
+        param->inputVariableIdsSize = 0;
+        param->inputVariableIds = NULL;
+    } else {
+        param->inputVariableIdsSize = 1;
+        param->inputVariableIds = (UA_NodeId *)UA_calloc(1, sizeof(UA_NodeId));
+        UA_NodeId_copy(&variableId, &param->inputVariableIds[0]);
+        param->outputVariableIdsSize = 0;
+        param->outputVariableIds = NULL;
+    }
+ 
+    /* IsPersistent: connessione dinamica, non sopravvive al riavvio */
+    param->isPersistent = false;
+ 
+    /* CleanupTimeout: 0 = nessun cleanup automatico */
+    param->cleanupTimeout = 0.0;
+ 
+    /* IsPreconfigured: false — il CE è creato dinamicamente,
+     * non era preconfigurato nel modello del dispositivo */
+    param->isPreconfigured = false;
+ 
+    /* ── Campo proprio di PubSubConnectionEndpointParameterDataType ── */
+ 
+    /* Mode: 2=Publisher, 3=Subscriber (dall'enum PubSubConnectionEndpointModeEnum) */
+    param->mode = isPublisher
+                 ? UA_PUBSUBCONNECTIONENDPOINTMODEENUM_PUBLISHER
+                 : UA_PUBSUBCONNECTIONENDPOINTMODEENUM_SUBSCRIBER;
+ 
+    /* Wrappa il PubSubConnectionEndpointParameterDataType in
+     * un ExtensionObject e assegnalo a connectionEndpoint.fields.parameter */
+    cfg.connectionEndpoint.fields.parameter.encoding =
+    UA_EXTENSIONOBJECT_DECODED;
+    cfg.connectionEndpoint.fields.parameter.content.decoded.type =
+    &UA_TYPES_UAFX_DATA[
+        UA_TYPES_UAFX_DATA_PUBSUBCONNECTIONENDPOINTPARAMETERDATATYPE
+    ];
+cfg.connectionEndpoint.fields.parameter.content.decoded.data = param;
+ 
+ 
+    /* ═══════════════════════════════════════════════════════════
+     * 2. controlGroups — vuoto (no multi-master in questa versione)
+     * ═══════════════════════════════════════════════════════════ */
+    cfg.controlGroupsSize = 0;
+    cfg.controlGroups = NULL;
+ 
+    /* ═══════════════════════════════════════════════════════════
+     * 3. communicationLinks — array di 1 link
+     *
+     * PubSubCommunicationLinkConfigurationDataType ha 4 campi:
+     *   DataSetReaderRef                  (PubSubConfigurationRefDataType)
+     *   ExpectedSubscribedDataSetVersion  (ConfigurationVersionDataType)
+     *   DataSetWriterRef                  (PubSubConfigurationRefDataType)
+     *   ExpectedPublishedDataSetVersion   (ConfigurationVersionDataType)
+     *
+     * Per il Publisher popoliamo solo DataSetWriterRef
+     * (e ExpectedPublishedDataSetVersion).
+     * Per il Subscriber popoliamo solo DataSetReaderRef
+     * (e ExpectedSubscribedDataSetVersion).
+     *
+     * Gli indici dentro PubSubConfigurationRefDataType si
+     * riferiscono alla PubSubConfiguration2DataType che viene
+     * mandata nel param 4 della chiamata EstablishConnections.
+     * Visto che ne abbiamo sempre una sola per chiamata, e
+     * dentro c'è sempre una sola connection con un solo
+     * group con un solo writer/reader, gli indici sono tutti 0.
+     * ═══════════════════════════════════════════════════════════ */
+ 
     UA_PubSubCommunicationLinkConfigurationDataType link;
-    memset(&link, 0, sizeof(link));
-    /* link.dataSetWriterRef / dataSetReaderRef rimangono vuoti per ora */
+     memset(&link, 0, sizeof(link));
 
+    /* Popola la ref appropriata in base al ruolo */
+    if(isPublisher) {
+        /* DataSetWriterRef → primo DSW della prima connection */
+        link.dataSetWriterRef.configurationMask =
+            UA_PUBSUBCONFIGURATIONREFMASK_REFERENCEWRITER;
+        link.dataSetWriterRef.connectionIndex = 0;
+        link.dataSetWriterRef.groupIndex      = 0;
+        link.dataSetWriterRef.elementIndex    = 0;
+ 
+        /* ExpectedPublishedDataSetVersion: 0,0 = qualsiasi versione */
+        link.expectedPublishedDataSetVersion.majorVersion = 0;
+        link.expectedPublishedDataSetVersion.minorVersion = 0;
+ 
+        /* DataSetReaderRef rimane vuoto (configurationMask=0) */
+    } else {
+        /* DataSetReaderRef → primo DSR della prima connection */
+        link.dataSetReaderRef.configurationMask =
+            UA_PUBSUBCONFIGURATIONREFMASK_REFERENCEREADER;
+        link.dataSetReaderRef.connectionIndex = 0;
+        link.dataSetReaderRef.groupIndex      = 0;
+        link.dataSetReaderRef.elementIndex    = 0;
+ 
+        link.expectedSubscribedDataSetVersion.majorVersion = 0;
+        link.expectedSubscribedDataSetVersion.minorVersion = 0;
+    }
+ 
+    /* Costruisci l'array di ExtensionObject (1 elemento) */
     UA_ExtensionObject_setValueCopy(
-        &cfg.communicationLinks,
-        &link,
-        &UA_TYPES_UAFX_DATA[
-            UA_TYPES_UAFX_DATA_PUBSUBCOMMUNICATIONLINKCONFIGURATIONDATATYPE
-        ]
-    );
-
+    &cfg.communicationLinks,
+    &link,
+    &UA_TYPES_UAFX_DATA[
+        UA_TYPES_UAFX_DATA_PUBSUBCOMMUNICATIONLINKCONFIGURATIONDATATYPE
+    ]
+);
+  
     return cfg;
 }
 
@@ -118,7 +269,7 @@ buildPublisherConfig(UA_UInt16 publisherId,
                      const char *multicastUrl,
                      const char *networkInterface,
                      const char *variableName,
-                     double publishingInterval) {
+                     double publishingInterval,UA_NodeId pubVarNodeId) {
 
     UA_PubSubConfiguration2DataType cfg;
     UA_PubSubConfiguration2DataType_init(&cfg);
@@ -141,10 +292,10 @@ buildPublisherConfig(UA_UInt16 publisherId,
     /* address come ExtensionObject contenente
      * UA_NetworkAddressUrlDataType               */
     UA_NetworkAddressUrlDataType addr;
-    addr.networkInterface = UA_STRING((char*)networkInterface);
-    addr.url              = UA_STRING((char*)multicastUrl);
-    UA_ExtensionObject_setValue(&conn->address, &addr,
-        &UA_TYPES[UA_TYPES_NETWORKADDRESSURLDATATYPE]);
+    addr.networkInterface = UA_STRING_ALLOC((char*)networkInterface);
+    addr.url              = UA_STRING_ALLOC((char*)multicastUrl);
+    UA_ExtensionObject_setValueCopy(&conn->address, &addr,
+    &UA_TYPES[UA_TYPES_NETWORKADDRESSURLDATATYPE]);
 
     /* ── 2. WriterGroup ────────────────────────────────────── */
     conn->writerGroupsSize = 1;
@@ -210,10 +361,10 @@ buildPublisherConfig(UA_UInt16 publisherId,
     items.publishedDataSize = 1;
     items.publishedData = UA_calloc(1, sizeof(UA_PublishedVariableDataType));
     UA_PublishedVariableDataType_init(&items.publishedData[0]);
-    /* NodeId lasciato a null — il server lo risolve per nome */
+    items.publishedData[0].publishedVariable = pubVarNodeId; 
     items.publishedData[0].attributeId = UA_ATTRIBUTEID_VALUE;
 
-    UA_ExtensionObject_setValue(&pds->dataSetSource, &items,
+    UA_ExtensionObject_setValueCopy(&pds->dataSetSource, &items,
         &UA_TYPES[UA_TYPES_PUBLISHEDDATAITEMSDATATYPE]);
 
     return cfg;
@@ -239,7 +390,9 @@ buildSubscriberConfig(UA_UInt16 publisherId,
                       const char *multicastUrl,
                       const char *networkInterface,
                       const char *sourceVariableName,
-                      const char *targetVariableName) {
+                      UA_NodeId subVarNodeId,
+                      const char *targetVariableName
+                      ) {
 
     UA_PubSubConfiguration2DataType cfg;
     UA_PubSubConfiguration2DataType_init(&cfg);
@@ -255,9 +408,9 @@ buildSubscriberConfig(UA_UInt16 publisherId,
     conn->transportProfileUri = UA_STRING_ALLOC(TRANSPORT_URI);
 
     UA_NetworkAddressUrlDataType addr;
-    addr.networkInterface = UA_STRING((char*)networkInterface);
-    addr.url              = UA_STRING((char*)multicastUrl);
-    UA_ExtensionObject_setValue(&conn->address, &addr,
+    addr.networkInterface = UA_STRING_ALLOC((char*)networkInterface);
+    addr.url              = UA_STRING_ALLOC((char*)multicastUrl);
+    UA_ExtensionObject_setValueCopy(&conn->address, &addr,
         &UA_TYPES[UA_TYPES_NETWORKADDRESSURLDATATYPE]);
 
     /* ── 2. ReaderGroup ────────────────────────────────────── */
@@ -294,10 +447,11 @@ buildSubscriberConfig(UA_UInt16 publisherId,
          UA_UADPNETWORKMESSAGECONTENTMASK_GROUPHEADER   |
          UA_UADPNETWORKMESSAGECONTENTMASK_WRITERGROUPID |
          UA_UADPNETWORKMESSAGECONTENTMASK_PAYLOADHEADER);
-    dsr->messageSettings.encoding = UA_EXTENSIONOBJECT_DECODED;
-    dsr->messageSettings.content.decoded.type =
-        &UA_TYPES[UA_TYPES_UADPDATASETREADERMESSAGEDATATYPE];
-    dsr->messageSettings.content.decoded.data = &dsrMsg;
+    UA_ExtensionObject_setValueCopy(&dsr->messageSettings, &dsrMsg,
+        &UA_TYPES[UA_TYPES_UADPDATASETREADERMESSAGEDATATYPE]);
+
+    // UA_ExtensionObject_setValue(&wg->messageSettings, &wgMsg,
+        //&UA_TYPES[UA_TYPES_UADPWRITERGROUPMESSAGEDATATYPE]);
 
     /* MetaData — deve corrispondere al PDS del Publisher */
     dsr->dataSetMetaData.name = UA_STRING_ALLOC(sourceVariableName);
@@ -320,11 +474,12 @@ buildSubscriberConfig(UA_UInt16 publisherId,
     tvds.targetVariablesSize = 1;
     tvds.targetVariables = UA_calloc(1, sizeof(UA_FieldTargetDataType));
     UA_FieldTargetDataType_init(&tvds.targetVariables[0]);
+    tvds.targetVariables[0].targetNodeId = subVarNodeId;
     tvds.targetVariables[0].attributeId = UA_ATTRIBUTEID_VALUE;
     /* NodeId target: lasciato null, il server lo risolve
      * cercando targetVariableName nell'InputData della FE */
 
-    UA_ExtensionObject_setValue(&dsr->subscribedDataSet, &tvds,
+    UA_ExtensionObject_setValueCopy(&dsr->subscribedDataSet, &tvds,
         &UA_TYPES[UA_TYPES_TARGETVARIABLESDATATYPE]);
 
     return cfg;
@@ -341,6 +496,7 @@ static EstablishResult
 callEstablishConnections(
     const char *endpointUrl,
     const char *acName,
+    const UA_NodeId acNodeId,
 
     UA_ConnectionEndpointConfigurationDataType *epCfg,
     UA_PubSubCommunicationConfigurationDataType *commCfg
@@ -381,12 +537,9 @@ callEstablishConnections(
         return result;
     }
 
-     /* Naviga: Objects → FxRoot → <acName> → ConnectionManager → EstablishConnections */
-    UA_NodeId objectsFolder = UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER);
-    UA_NodeId fxRoot  = resolveChildByName(client, objectsFolder, "FxRoot");
-    UA_NodeId acNode  = resolveChildByName(client, fxRoot, acName);
-    UA_NodeId cm      = resolveChildByName(client, acNode, "ConnectionManager");
-    UA_NodeId method  = resolveChildByName(client, cm, "EstablishConnections");
+     /* Naviga: Objects → FxRoot → <acName> → EstablishConnections */
+    
+    UA_NodeId method  = resolveChildByName(client, acNodeId, "EstablishConnections");
 
     if(UA_NodeId_isNull(&method)) {
         snprintf(result.errorMessage, sizeof(result.errorMessage),
@@ -418,7 +571,9 @@ callEstablishConnections(
     * Empty
     * --------------------------------------------------------- */
 
-    UA_Variant_init(&inputArgs[1]);
+    /* [1] AssetVerifications — array vuoto del tipo corretto */
+UA_Variant_setArray(&inputArgs[1], NULL, 0,
+    &UA_TYPES_UAFX_DATA[UA_TYPES_UAFX_DATA_ASSETVERIFICATIONDATATYPE]);
 
     /* ---------------------------------------------------------
     * [2] ConnectionEndpointConfigurations
@@ -438,7 +593,9 @@ callEstablishConnections(
     * Empty
     * --------------------------------------------------------- */
 
-    UA_Variant_init(&inputArgs[3]);
+    /* [3] ReserveCommunicationIds — array vuoto */
+UA_Variant_setArray(&inputArgs[3], NULL, 0,
+    &UA_TYPES_UAFX_DATA[UA_TYPES_UAFX_DATA_PUBSUBRESERVECOMMUNICATIONIDSDATATYPE]);
 
     /* ---------------------------------------------------------
     * [4] CommunicationConfigurations
@@ -459,7 +616,7 @@ callEstablishConnections(
 
     rc = UA_Client_call(
         client,
-        cm,
+        acNodeId,
         method,
 
         5,
@@ -468,48 +625,65 @@ callEstablishConnections(
         &outputSize,
         &output
     );
+    printf("[CM] UA_Client_call returned rc=0x%08X (%s), outputSize=%zu, output=%p\n",
+       rc, UA_StatusCode_name(rc), outputSize, (void*)output);
+       
+    if(rc != UA_STATUSCODE_GOOD || !output || outputSize < 4) {
+    snprintf(result.errorMessage, sizeof(result.errorMessage),
+             "Bad response: rc=%s outputSize=%zu",
+             UA_StatusCode_name(rc), outputSize);
+    if(output) UA_Array_delete(output, outputSize, &UA_TYPES[UA_TYPES_VARIANT]);
+    UA_Client_disconnect(client);
+    UA_Client_delete(client);
+    return result;
+} else {
+    result.ok = true;
 
-    if(rc != UA_STATUSCODE_GOOD) {
-        snprintf(result.errorMessage, sizeof(result.errorMessage),
-                 "EstablishConnections failed on %s: %s",
-                 endpointUrl, UA_StatusCode_name(rc));
-    } else {
-        result.ok = true;
-
-        if(outputSize >= 3 && output) {
-
-            /* ── output[2]: ConnectionEndpointResults ── */
-            UA_ConnectionEndpointConfigurationResultDataType *epRes =
-                (UA_ConnectionEndpointConfigurationResultDataType *)
-                output[2].data;
-            if(epRes) {
-                UA_NodeId_copy(&epRes->connectionEndpointId,
-                               &result.connectionEndpointId);
-            }
-
-            /* ── output[3]: CommunicationConfigResults ── */
-            if(outputSize >= 4) {
-                UA_PubSubCommunicationConfigurationResultDataType *commRes =
-                    (UA_PubSubCommunicationConfigurationResultDataType *)
-                    output[3].data;
-                if(commRes) {
-                    if(commRes->result != UA_STATUSCODE_GOOD) {
-                        result.ok = false;
-                        snprintf(result.errorMessage,
-                                 sizeof(result.errorMessage),
-                                 "Server returned error: %s",
-                                 UA_StatusCode_name(commRes->result));
-                    } else if(commRes->configurationObjectsSize > 0) {
-                        /* configurationObjects[0] = NodeId del DSW/DSR creato */
-                        UA_NodeId_copy(&commRes->configurationObjects[0],
-                                       &result.dataSetWriterNodeId);
-                    }
-                }
-            }
+    /* ── output[1]: ConnectionEndpointConfigurationResults ── */
+    if(output[1].arrayLength >= 1 && output[1].data &&
+       output[1].type == &UA_TYPES_UAFX_DATA[
+           UA_TYPES_UAFX_DATA_CONNECTIONENDPOINTCONFIGURATIONRESULTDATATYPE]) {
+        UA_ConnectionEndpointConfigurationResultDataType *epRes =
+            (UA_ConnectionEndpointConfigurationResultDataType *)output[1].data;
+        UA_NodeId_copy(&epRes[0].connectionEndpointId,
+                       &result.connectionEndpointId);
+        printf("[CM] CE result statusCode=0x%08X\n",
+               epRes[0].connectionEndpointResult);
+        if(epRes[0].connectionEndpointResult != UA_STATUSCODE_GOOD) {
+            result.ok = false;
+            snprintf(result.errorMessage, sizeof(result.errorMessage),
+                     "CE result error: %s",
+                     UA_StatusCode_name(epRes[0].connectionEndpointResult));
         }
-
-        UA_Array_delete(output, outputSize, &UA_TYPES[UA_TYPES_VARIANT]);
+    } else {
+        printf("[CM] WARNING: output[1] empty or wrong type\n");
     }
+
+    /* ── output[3]: CommunicationConfigurationResults ── */
+    if(output[3].arrayLength >= 1 && output[3].data &&
+       output[3].type == &UA_TYPES_UAFX_DATA[
+           UA_TYPES_UAFX_DATA_PUBSUBCOMMUNICATIONCONFIGURATIONRESULTDATATYPE]) {
+        UA_PubSubCommunicationConfigurationResultDataType *commRes =
+            (UA_PubSubCommunicationConfigurationResultDataType *)output[3].data;
+        printf("[CM] Comm result statusCode=0x%08X configObjsSize=%zu\n",
+               commRes[0].result, commRes[0].configurationObjectsSize);
+        if(commRes[0].result != UA_STATUSCODE_GOOD) {
+            result.ok = false;
+            snprintf(result.errorMessage, sizeof(result.errorMessage),
+                     "Comm result error: %s",
+                     UA_StatusCode_name(commRes[0].result));
+        } else if(commRes[0].configurationObjectsSize > 0) {
+            UA_NodeId_copy(&commRes[0].configurationObjects[0],
+                           &result.dataSetWriterNodeId);
+        }
+    } else {
+        printf("[CM] WARNING: output[3] empty or wrong type\n");
+    }
+    printf("[CM] About to UA_Array_delete output\n");
+    UA_Array_delete(output, outputSize, &UA_TYPES[UA_TYPES_VARIANT]);
+    printf("[CM] UA_Array_delete done\n");
+    UA_Array_delete(output, outputSize, &UA_TYPES[UA_TYPES_VARIANT]);
+}
 
     UA_Client_disconnect(client);
     UA_Client_delete(client);
@@ -558,21 +732,25 @@ bool establishConnection(TopologyGraph *graph,
         buildPublisherConfig(publisherId, writerGroupId, dataSetWriterId,
                              multicastUrl, "enp0s31f6",
                              req->publisherVariable,
-                             req->publishingInterval);
+                             req->publishingInterval,req->publisherVariableNodeId);
 
     UA_PubSubCommunicationConfigurationDataType pubCommCfg;
     memset(&pubCommCfg, 0, sizeof(pubCommCfg));
-    pubCommCfg.pubSubConfiguration     = pubCfg;
+    pubCommCfg.pubSubConfiguration = pubCfg; 
     pubCommCfg.requireCompleteUpdate   = false;
-
+    
+    printf("[CM] BEFORE call: pubCommCfg.pubSubConfiguration.connectionsSize=%zu pdsSize=%zu\n",
+       pubCommCfg.pubSubConfiguration.connectionsSize,
+       pubCommCfg.pubSubConfiguration.publishedDataSetsSize);
+       
     /* ── 4. Chiama EstablishConnections sul Publisher ─────── */
     printf("[CM] Calling EstablishConnections on Publisher (%s)...\n",
            pubNode->endpointUrl);
 
     UA_ConnectionEndpointConfigurationDataType pubEpCfg =
     buildEndpointConfiguration(
-        "PublisherEndpoint",
-        req->publisherVariable,
+        "CE_Pub_001",
+        req->publisherVariableNodeId,
         true
     );
 
@@ -580,12 +758,12 @@ bool establishConnection(TopologyGraph *graph,
     callEstablishConnections(
         pubNode->endpointUrl,
         req->publisherAcName,
+        req->publisherAcNodeId,
 
         &pubEpCfg,
         &pubCommCfg
     );
-
-    UA_PubSubConfiguration2DataType_clear(&pubCfg);
+    //UA_PubSubConfiguration2DataType_clear(&pubCfg);
 
     if(!pubResult.ok) {
         printf("[CM] Publisher failed: %s\n", pubResult.errorMessage);
@@ -598,7 +776,9 @@ bool establishConnection(TopologyGraph *graph,
         buildSubscriberConfig(publisherId, writerGroupId, dataSetWriterId,
                               multicastUrl, "enp0s31f6",
                               req->publisherVariable,
-                              req->subscriberVariable);
+                              req->subscriberVariableNodeId,
+                              req->subscriberVariable
+                            );
 
     UA_PubSubCommunicationConfigurationDataType subCommCfg;
     memset(&subCommCfg, 0, sizeof(subCommCfg));
@@ -611,8 +791,8 @@ bool establishConnection(TopologyGraph *graph,
     
     UA_ConnectionEndpointConfigurationDataType subEpCfg =
     buildEndpointConfiguration(
-        "SubscriberEndpoint",
-        req->subscriberVariable,
+        "CE_Sub_001",
+        req->subscriberVariableNodeId,
         false
     );
 
@@ -620,12 +800,12 @@ bool establishConnection(TopologyGraph *graph,
     callEstablishConnections(
         subNode->endpointUrl,
         req->subscriberAcName,
+        req->subscriberAcNodeId,
 
         &subEpCfg,
         &subCommCfg
     );
-
-    UA_PubSubConfiguration2DataType_clear(&subCfg);
+    //UA_PubSubConfiguration2DataType_clear(&subCfg);
 
     if(!subResult.ok) {
         printf("[CM] Subscriber failed: %s\n", subResult.errorMessage);
