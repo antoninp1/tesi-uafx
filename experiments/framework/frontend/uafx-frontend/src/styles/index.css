@@ -745,3 +745,92 @@ input {
 .react-flow__controls-button:hover {
   background: #f9fafb;
 }
+
+.connection-summary {
+  background: var(--surface-secondary, #f8fafc);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.connection-summary-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.summary-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-muted, #94a3b8);
+  letter-spacing: 0.05em;
+}
+
+.summary-value {
+  font-weight: 600;
+  font-size: 14px;
+  display: flex;
+  flex-direction: column;
+}
+
+.summary-sub {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--text-muted, #94a3b8);
+}
+
+.summary-var {
+  font-size: 12px;
+  color: var(--accent, #8b5cf6);
+  margin-top: 2px;
+}
+
+.connection-summary-arrow {
+  text-align: center;
+  color: var(--text-muted, #94a3b8);
+  font-size: 18px;
+  margin: 4px 0;
+}
+
+.modal-divider {
+  border: none;
+  border-top: 1px solid var(--border, #e2e8f0);
+  margin: 16px 0;
+}
+
+.connection-error-toast {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  z-index: 500;
+  max-width: 480px;
+  animation: slideUp 0.2s ease-out;
+}
+
+.connection-error-toast button {
+  background: transparent;
+  color: #991b1b;
+  font-size: 16px;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+
+.connection-error-toast button:hover {
+  color: #7f1d1d;
+}

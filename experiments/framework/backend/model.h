@@ -58,6 +58,8 @@ typedef enum {
 
 typedef struct {
     char     name[MAX_STR_LEN];
+    char nodeId[MAX_STR_LEN]; 
+
     DataType type;
     union {
         float       fVal;
@@ -116,7 +118,7 @@ typedef struct {
 
 typedef struct {
     char         name[MAX_STR_LEN];
-
+    char nodeId[MAX_STR_LEN]; 
     /* Identificazione (Part 81, IFunctionalEntityType) */
     char         authorUri[MAX_STR_LEN];
     char         authorAssignedIdentifier[MAX_STR_LEN];
@@ -177,6 +179,8 @@ typedef struct {
 
 typedef struct {
     char                  name[MAX_STR_LEN];
+    char nodeId[MAX_STR_LEN]; 
+
     char                  conformanceName[MAX_STR_LEN];
     uint32_t              aggregatedHealth;
 

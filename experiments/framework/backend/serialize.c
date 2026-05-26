@@ -43,6 +43,7 @@ static const char *nodeTypeToString(TopologyNodeType t) {
 static cJSON *dataVariableToJson(const DataVariable *v) {
     cJSON *obj = cJSON_CreateObject();
     cJSON_AddStringToObject(obj, "name", v->name);
+    cJSON_AddStringToObject(obj, "nodeId", v->nodeId); 
     cJSON_AddStringToObject(obj, "units", v->engineeringUnits);
 
     switch(v->type) {
@@ -85,6 +86,7 @@ static cJSON *dataVariableToJson(const DataVariable *v) {
 static cJSON *functionalEntityToJson(const FunctionalEntity *fe) {
     cJSON *obj = cJSON_CreateObject();
     cJSON_AddStringToObject(obj, "name", fe->name);
+    cJSON_AddStringToObject(obj, "nodeId", fe->nodeId);
     cJSON_AddStringToObject(obj, "authorUri", fe->authorUri);
     cJSON_AddStringToObject(obj, "authorAssignedIdentifier", fe->authorAssignedIdentifier);
     cJSON_AddStringToObject(obj, "authorAssignedVersion", fe->authorAssignedVersion);
@@ -129,6 +131,7 @@ static cJSON *assetToJson(const Asset *a) {
 static cJSON *automationComponentToJson(const AutomationComponent *ac) {
     cJSON *obj = cJSON_CreateObject();
     cJSON_AddStringToObject(obj, "name",             ac->name);
+    cJSON_AddStringToObject(obj, "nodeId", ac->nodeId);
     cJSON_AddStringToObject(obj, "conformanceName",  ac->conformanceName);
     cJSON_AddNumberToObject(obj, "aggregatedHealth", ac->aggregatedHealth);
 
@@ -292,6 +295,10 @@ static cJSON *buildLogicalView(const TopologyGraph *graph) {
                 char id[512];
                 snprintf(id, sizeof(id), "%s/%s/%s",
                          node->id, ac->name, fe->name);
+                cJSON_AddStringToObject(feNode, "feNodeId", fe->nodeId);
+                cJSON_AddStringToObject(feNode, "endpointUrl", node->endpointUrl);
+
+
                 cJSON_AddStringToObject(feNode, "id", id);
                 cJSON_AddStringToObject(feNode, "label", fe->name);
                 cJSON_AddStringToObject(feNode, "type", "functional_entity");
@@ -299,6 +306,8 @@ static cJSON *buildLogicalView(const TopologyGraph *graph) {
                 /* Riferimenti per il frontend: parent device, AC */
                 cJSON_AddStringToObject(feNode, "parentChassisId", node->id);
                 cJSON_AddStringToObject(feNode, "parentDeviceName", node->name);
+                cJSON_AddStringToObject(feNode, "acNodeId", ac->nodeId);
+
                 cJSON_AddStringToObject(feNode, "parentAcName", ac->name);
 
                 /* FE metadata */
@@ -314,6 +323,7 @@ static cJSON *buildLogicalView(const TopologyGraph *graph) {
                 for(size_t i = 0; i < fe->outputDataCount; i++) {
                     cJSON *h = cJSON_CreateObject();
                     cJSON_AddStringToObject(h, "name", fe->outputData[i].name);
+                    cJSON_AddStringToObject(h, "nodeId", fe->outputData[i].nodeId);
                     cJSON_AddStringToObject(h, "units", fe->outputData[i].engineeringUnits);
                     cJSON_AddItemToArray(outputs, h);
                 }
@@ -322,6 +332,7 @@ static cJSON *buildLogicalView(const TopologyGraph *graph) {
                 for(size_t i = 0; i < fe->inputDataCount; i++) {
                     cJSON *h = cJSON_CreateObject();
                     cJSON_AddStringToObject(h, "name", fe->inputData[i].name);
+                    cJSON_AddStringToObject(h, "nodeId", fe->inputData[i].nodeId);
                     cJSON_AddStringToObject(h, "units", fe->inputData[i].engineeringUnits);
                     cJSON_AddItemToArray(inputs, h);
                 }

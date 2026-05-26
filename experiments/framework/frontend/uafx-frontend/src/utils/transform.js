@@ -57,7 +57,14 @@ export function transformLogical(logical) {
     position: { x: 0, y: 0 },
     data: {
       label: fe.label,
-      raw: fe,
+      feNodeId: fe.feNodeId,       // invece di node.data.raw.feNodeId
+      acNodeId: fe.acNodeId,       // invece di node.data.raw.acNodeId
+      endpointUrl: fe.endpointUrl, // invece di node.data.raw.endpointUrl
+      parentChassisId: fe.parentChassisId,
+      parentAcName: fe.parentAcName,
+      inputs: fe.inputs   || [],
+      outputs: fe.outputs || [],
+      raw: fe,                     // lo tieni comunque per il DetailPanel
     },
   }));
 

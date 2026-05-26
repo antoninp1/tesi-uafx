@@ -123,6 +123,12 @@ void browseDataFolder(UA_Client *client, UA_NodeId folderNodeId,
                     memset(slot, 0, sizeof(DataVariable));
                     safeStrCopy(slot->name, varName, MAX_STR_LEN);
                     slot->type = DATATYPE_UNKNOWN;
+                    // Salva il NodeId della variabile
+                    UA_String nodeIdStr = UA_STRING_NULL;
+                    UA_NodeId_print(&ref->nodeId.nodeId, &nodeIdStr);
+                    snprintf(slot->nodeId, sizeof(slot->nodeId), "%.*s",
+                            (int)nodeIdStr.length, nodeIdStr.data);
+                    UA_String_clear(&nodeIdStr);
                 }
 
                 if(rc == UA_STATUSCODE_GOOD) {
@@ -208,9 +214,15 @@ void browseFunctionalEntity(UA_Client *client, UA_NodeId feNodeId,
     printf("\n      +-- FunctionalEntity: %s\n", feName);
 
     if(fe) {
-        memset(fe, 0, sizeof(FunctionalEntity));
-        safeStrCopy(fe->name, feName, MAX_STR_LEN);
-    }
+    memset(fe, 0, sizeof(FunctionalEntity));
+    safeStrCopy(fe->name, feName, MAX_STR_LEN);
+
+    UA_String nodeIdStr = UA_STRING_NULL;
+    UA_NodeId_print(&feNodeId, &nodeIdStr);
+    snprintf(fe->nodeId, sizeof(fe->nodeId), "%.*s",
+             (int)nodeIdStr.length, nodeIdStr.data);
+    UA_String_clear(&nodeIdStr);
+}
 
     /* Identificazione */
     char *authorUri  = readStringProperty(client, feNodeId, "AuthorUri");
@@ -439,7 +451,16 @@ void browseAutomationComponent(UA_Client *client,
     if(ac) {
         memset(ac, 0, sizeof(AutomationComponent));
         safeStrCopy(ac->name, acName, MAX_STR_LEN);
+         // Salva il NodeId dell'AC
+        UA_String nodeIdStr = UA_STRING_NULL;
+        UA_NodeId_print(&acNodeId, &nodeIdStr);
+        snprintf(ac->nodeId, sizeof(ac->nodeId), "%.*s",
+                (int)nodeIdStr.length, nodeIdStr.data);
+        UA_String_clear(&nodeIdStr);
     }
+
+    
+
 
     char *conformance = readStringProperty(client, acNodeId, "ConformanceName");
     if(conformance) {
@@ -491,6 +512,15 @@ void browseAutomationComponent(UA_Client *client,
                                 if(ac && ac->functionalEntitiesCount < MAX_FUNCTIONAL_ENTITIES) {
                                     fePtr = &ac->functionalEntities[ac->functionalEntitiesCount];
                                     ac->functionalEntitiesCount++;
+                                }
+
+                                // Salva il NodeId della FE come stringa
+                                if(fePtr) {
+                                    UA_String nodeIdStr = UA_STRING_NULL;
+                                    UA_NodeId_print(&fr->nodeId.nodeId, &nodeIdStr);
+                                    snprintf(fePtr->nodeId, sizeof(fePtr->nodeId), "%.*s",
+                                            (int)nodeIdStr.length, nodeIdStr.data);
+                                    UA_String_clear(&nodeIdStr);
                                 }
 
                                 browseFunctionalEntity(client,
