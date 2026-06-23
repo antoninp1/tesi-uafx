@@ -3,12 +3,18 @@ ip link set eth0 up
 lldpd
 lldpcli configure lldp tx-interval 5
 sleep 25
-UAFX_APP_URI="urn:kathara:uafx:node1" \
-UAFX_APP_NAME="node1" \
-UAFX_SYS_NAME="node1" \
-UAFX_MGMT_ADDR="10.0.0.1" \
+
+# LDS per primo (deve essere pronto a ricevere le registrazioni)
+LDS_ADVERTISE_URL="opc.tcp://10.0.0.1:4840" /shared/lds_server 4840 &
+sleep 3
+
+# backend HTTP (discovery service, porta 8080)
+RELYUM_HOST=dummy RELYUM_USER=dummy RELYUM_PASSWORD=dummy /shared/backend &
+sleep 2
+
+# temp_server locale (node1 è anche un device UAFX scopribile)
+UAFX_APP_URI="urn:kathara:uafx:node1" UAFX_APP_NAME="node1" \
+UAFX_SYS_NAME="node1" UAFX_MGMT_ADDR="10.0.0.1" \
 UAFX_PUBLIC_URL="opc.tcp://10.0.0.1:4841" \
-UAFX_LDS_URL="opc.tcp://10.0.0.1:4840" \
-UAFX_PORT="4841" \
-UAFX_PUBSUB_IFACE="eth0" \
-/shared/temp_server &
+UAFX_LDS_URL="opc.tcp://10.0.0.1:4840" UAFX_PORT="4841" \
+UAFX_PUBSUB_IFACE="eth0" /shared/temp_server &
