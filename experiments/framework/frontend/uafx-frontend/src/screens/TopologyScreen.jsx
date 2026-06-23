@@ -9,6 +9,7 @@ import 'reactflow/dist/style.css';
 import TabBar from '../components/TabBar.jsx';
 import Toolbar from '../components/Toolbar.jsx';
 import DetailPanel from '../components/DetailPanel.jsx';
+import ConnectionDetailPanel from '../components/ConnectionDetailPanel.jsx';
 import ConnectionDialog from '../components/ConnectionDialog.jsx';
 
 import UafxServerNode from '../nodes/UafxServerNode.jsx';
@@ -28,6 +29,7 @@ const nodeTypes = {
 export default function TopologyScreen({ topology, onRerun }) {
   const [viewMode, setViewMode] = useState('physical');
   const [selectedNode, setSelectedNode] = useState(null);
+  const [selectedEdge, setSelectedEdge] = useState(null);  
   const [connectionDraft, setConnectionDraft] = useState(null);
   const [connectionError, setConnectionError] = useState(null);
 
@@ -141,7 +143,6 @@ export default function TopologyScreen({ topology, onRerun }) {
       const data = await res.json();
 
       if (data.success) {
-        // Aggiungi l'edge al grafo
         setEdges(eds => [...eds, {
           id: `conn-${Date.now()}`,
           source: connectionDraft.sourceNode.id,
@@ -150,7 +151,17 @@ export default function TopologyScreen({ topology, onRerun }) {
           targetHandle: connectionDraft.targetHandle,
           animated: true,
           style: { stroke: '#22c55e', strokeWidth: 2 },
+          data: {
+            ...data.connection,
+            publisherEndpointUrl:     connectionDraft.sourceNode.data.endpointUrl,
+            subscriberEndpointUrl:    connectionDraft.targetNode.data.endpointUrl,
+            publisherVariableNodeId:  connectionDraft.sourceVar.nodeId,
+            subscriberVariableNodeId: connectionDraft.targetVar.nodeId,
+            publisherVariableName:    connectionDraft.sourceVar.name,
+            subscriberVariableName:   connectionDraft.targetVar.name,
+          },
         }]);
+
       } else {
         setConnectionError(data.error || 'Connection failed.');
       }
@@ -165,9 +176,14 @@ export default function TopologyScreen({ topology, onRerun }) {
     setSelectedNode(node);
   }, []);
 
-  const handlePaneClick = useCallback(() => {
-    setSelectedNode(null);
+  const handleEdgeClick = useCallback((event, edge) => {   
+  setSelectedEdge(edge);
+  setSelectedNode(null);
   }, []);
+  const handlePaneClick = useCallback(() => {               
+  setSelectedNode(null);
+  setSelectedEdge(null);
+}, []);
 
   const handleViewChange = (newMode) => {
     setViewMode(newMode);
@@ -200,6 +216,7 @@ export default function TopologyScreen({ topology, onRerun }) {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onNodeClick={handleNodeClick}
+            onEdgeClick={handleEdgeClick}
             onPaneClick={handlePaneClick}
             onConnect={onConnect}
             fitView
@@ -225,6 +242,13 @@ export default function TopologyScreen({ topology, onRerun }) {
             node={selectedNode}
             viewMode={viewMode}
             onClose={() => setSelectedNode(null)}
+          />
+        )}
+
+        {selectedEdge && (
+          <ConnectionDetailPanel
+            edge={selectedEdge}
+            onClose={() => setSelectedEdge(null)}
           />
         )}
 

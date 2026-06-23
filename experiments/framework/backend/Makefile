@@ -14,9 +14,10 @@ CC      = gcc
 
 # Directory dei tipi UAFX generati dal nodeset compiler
 UAFX_TYPES_DIR = ../../../lib/uafx_types
-OPEN62541_DIR = ../../../lib/
+OPEN62541_DIR  = ../../../lib/
 
-CFLAGS  = -Wall -std=gnu99 -DUA_ENABLE_AMALGAMATION -I$(UAFX_TYPES_DIR) -I$(OPEN62541_DIR)
+CFLAGS  = -Wall -std=gnu99 -DUA_ENABLE_AMALGAMATION \
+          -I$(UAFX_TYPES_DIR) -I$(OPEN62541_DIR)
 LDFLAGS = -pthread
 
 TARGET  = backend
@@ -24,7 +25,7 @@ TARGET  = backend
 # Sorgenti del backend
 SRCS    = main.c browse.c discovery.c helpers.c model.c tde.c \
           link_builder.c serialize.c http_server.c \
-          connection_manager.c \
+          connection_manager.c connection_io.c \
           cJSON.c mongoose.c open62541.c
 
 # Sorgenti generati — compilati separatamente e linkati
@@ -54,13 +55,16 @@ link_builder.o: link_builder.c link_builder.h model.h
 serialize.o:    serialize.c serialize.h model.h cJSON.h
 http_server.o:  http_server.c http_server.h serialize.h mongoose.h \
                 discovery.h browse.h tde.h link_builder.h \
-                connection_manager.h model.h
+                connection_manager.h connection_io.h model.h
 
 connection_manager.o: connection_manager.c connection_manager.h \
                       model.h common.h \
                       $(UAFX_TYPES_DIR)/types_uafx_data_generated.h \
                       $(UAFX_TYPES_DIR)/types_uafx_ac_generated.h \
                       $(UAFX_TYPES_DIR)/my_uafx_model.h
+
+connection_io.o: connection_io.c connection_io.h \
+                 connection_manager.h model.h cJSON.h helpers.h
 
 cJSON.o: cJSON.c cJSON.h
 	$(CC) -std=c99 -Wno-unused-parameter -c -o $@ $<
@@ -72,17 +76,17 @@ open62541.o: open62541.c open62541.h
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
+
 # ── cm_test ───────────────────────────────────────────────────
 CM_TEST_SRCS = cm_test.c browse.c discovery.c helpers.c model.c tde.c \
                link_builder.c serialize.c connection_manager.c \
-               cJSON.c mongoose.c open62541.c
+               connection_io.c cJSON.c mongoose.c open62541.c
 
 CM_TEST_OBJS = $(CM_TEST_SRCS:.c=.o)
 
 cm_test: $(CM_TEST_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(GENERATED_SRCS) $(LDFLAGS)
 
+# ── Clean ─────────────────────────────────────────────────────
 clean:
 	rm -f $(OBJS) $(CM_TEST_OBJS) $(TARGET) cm_test
-clean:
-	rm -f $(OBJS) $(TARGET)

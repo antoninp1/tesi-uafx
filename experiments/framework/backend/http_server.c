@@ -18,6 +18,7 @@
 #include <string.h>
 #include <time.h>
 #include "cJSON.h"
+#include "connection_io.h"
 /* ============================================================
  * Stato globale del modulo
  * ============================================================ */
@@ -347,6 +348,122 @@ static void handleGetDevice(struct mg_connection *c, struct mg_str uri) {
     replyJson(c, 200, deviceDetailToJson(&g_graph->nodes[idx]));
 }
 
+static void handleConnect(struct mg_connection *c, struct mg_http_message *hm) {
+    if(hm->body.len == 0) {
+        replyError(c, 400, "bad_request", "Empty body");
+        return;
+    }
+
+    char *bodyStr = malloc(hm->body.len + 1);
+    if(!bodyStr) { replyError(c, 500, "internal", "malloc failed"); return; }
+    memcpy(bodyStr, hm->body.buf, hm->body.len);
+    bodyStr[hm->body.len] = '\0';
+
+    ConnectionRequest req;
+    if(!connectionRequestFromJson(bodyStr, &req)) {
+        free(bodyStr);
+        replyError(c, 400, "bad_request", "Invalid or incomplete JSON");
+        return;
+    }
+    free(bodyStr);
+
+    ConnectionResponse resp;
+    memset(&resp, 0, sizeof(resp));
+
+    resp.success = establishConnection(g_graph, &req, &resp.connection);
+    if(!resp.success)
+        snprintf(resp.errorMessage, sizeof(resp.errorMessage),
+                 "Connection manager failed");
+
+    replyJson(c, resp.success ? 200 : 500,
+              connectionResponseToJson(&resp));
+}
+
+static void handleGetValue(struct mg_connection *c, struct mg_http_message *hm) {
+    /* Estrai i query parameters */
+    char endpointUrl[256] = {0};
+    char nodeIdStr[128]   = {0};
+
+    mg_http_get_var(&hm->query, "endpointUrl", endpointUrl, sizeof(endpointUrl));
+    mg_http_get_var(&hm->query, "nodeId",      nodeIdStr,   sizeof(nodeIdStr));
+
+    if(endpointUrl[0] == '\0' || nodeIdStr[0] == '\0') {
+        replyError(c, 400, "bad_request", "Missing endpointUrl or nodeId");
+        return;
+    }
+
+    /* Parse del NodeId */
+    UA_NodeId nodeId;
+    UA_NodeId_init(&nodeId);
+    UA_StatusCode rc = UA_NodeId_parse(&nodeId, UA_STRING(nodeIdStr));
+    if(rc != UA_STATUSCODE_GOOD) {
+        replyError(c, 400, "bad_request", "Invalid nodeId format");
+        return;
+    }
+
+    /* Connessione al server OPC UA */
+    UA_Client *client = UA_Client_new();
+    UA_ClientConfig_setDefault(UA_Client_getConfig(client));
+
+    rc = UA_Client_connect(client, endpointUrl);
+    if(rc != UA_STATUSCODE_GOOD) {
+        UA_Client_delete(client);
+        UA_NodeId_clear(&nodeId);
+        replyError(c, 502, "connection_failed", "Cannot connect to OPC UA server");
+        return;
+    }
+
+    /* Lettura del valore */
+    UA_Variant value;
+    UA_Variant_init(&value);
+    rc = UA_Client_readValueAttribute(client, nodeId, &value);
+
+    UA_Client_disconnect(client);
+    UA_Client_delete(client);
+    UA_NodeId_clear(&nodeId);
+
+    if(rc != UA_STATUSCODE_GOOD) {
+        replyError(c, 502, "read_failed", UA_StatusCode_name(rc));
+        return;
+    }
+
+    /* Serializza il valore in JSON */
+    cJSON *resp = cJSON_CreateObject();
+    cJSON_AddStringToObject(resp, "nodeId", nodeIdStr);
+
+    if(UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_FLOAT])) {
+        cJSON_AddStringToObject(resp, "type", "float");
+        cJSON_AddNumberToObject(resp, "value", *(UA_Float *)value.data);
+    } else if(UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_DOUBLE])) {
+        cJSON_AddStringToObject(resp, "type", "double");
+        cJSON_AddNumberToObject(resp, "value", *(UA_Double *)value.data);
+    } else if(UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_INT32])) {
+        cJSON_AddStringToObject(resp, "type", "int32");
+        cJSON_AddNumberToObject(resp, "value", *(UA_Int32 *)value.data);
+    } else if(UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_UINT32])) {
+        cJSON_AddStringToObject(resp, "type", "uint32");
+        cJSON_AddNumberToObject(resp, "value", *(UA_UInt32 *)value.data);
+    } else if(UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_BOOLEAN])) {
+        cJSON_AddStringToObject(resp, "type", "boolean");
+        cJSON_AddBoolToObject(resp, "value", *(UA_Boolean *)value.data);
+    } else if(UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_STRING])) {
+        UA_String *s = (UA_String *)value.data;
+        char buf[256] = {0};
+        size_t len = s->length < sizeof(buf) - 1 ? s->length : sizeof(buf) - 1;
+        memcpy(buf, s->data, len);
+        cJSON_AddStringToObject(resp, "type", "string");
+        cJSON_AddStringToObject(resp, "value", buf);
+    } else {
+        cJSON_AddStringToObject(resp, "type", "unknown");
+        cJSON_AddNullToObject(resp, "value");
+    }
+
+    UA_Variant_clear(&value);
+
+    char *respStr = cJSON_PrintUnformatted(resp);
+    cJSON_Delete(resp);
+    replyJson(c, 200, respStr);
+}
 /* ============================================================
  * Routing principale
  * ============================================================ */
@@ -402,6 +519,19 @@ static void routeRequest(struct mg_connection *c, struct mg_http_message *hm) {
         return;
     }
 
+    /* ─── POST /api/connect ───────────────────────────────── */
+if(mg_strcmp(method, mg_str("POST")) == 0 &&
+   mg_match(uri, mg_str("/api/connect"), NULL)) {
+    handleConnect(c, hm);
+    return;
+}
+
+/* ─── GET /api/value ──────────────────────────────────── */
+if(mg_strcmp(method, mg_str("GET")) == 0 &&
+   mg_match(uri, mg_str("/api/value"), NULL)) {
+    handleGetValue(c, hm);
+    return;
+}
     /* ─── Fase 3: TSN configuration ───────────────────── */
     if(mg_match(uri, mg_str("/api/tsn/#"), NULL)) {
         replyNotImplemented(c, "3 (TSN)");

@@ -9,13 +9,6 @@
 #include "browse.h"
 #include "helpers.h"
 
-/* Helper interno: copia stringa con troncamento sicuro */
-static void safeStrCopy(char *dst, const char *src, size_t dstSize) {
-    if(!dst || dstSize == 0) return;
-    if(!src) { dst[0] = '\0'; return; }
-    strncpy(dst, src, dstSize - 1);
-    dst[dstSize - 1] = '\0';
-}
 
 /* Helper: legge stringa e la copia direttamente in un buffer */
 static void readStringInto(UA_Client *client, UA_NodeId parent,
@@ -303,7 +296,11 @@ void browseFunctionalEntity(UA_Client *client, UA_NodeId feNodeId,
                                         &fe->connectionEndpoints[fe->connectionEndpointsCount];
                                     memset(ceInfo, 0, sizeof(ConnectionEndpoint));
                                     safeStrCopy(ceInfo->name, ceName, MAX_STR_LEN);
-                                    UA_NodeId_copy(&ce->nodeId.nodeId, &ceInfo->nodeId);
+                                    UA_String nodeIdStr = UA_STRING_NULL;
+                                    UA_NodeId_print(&ce->nodeId.nodeId, &nodeIdStr);
+                                    snprintf(ceInfo->nodeId, sizeof(ceInfo->nodeId), "%.*s",
+                                            (int)nodeIdStr.length, nodeIdStr.data);
+                                    UA_String_clear(&nodeIdStr);
                                     fe->connectionEndpointsCount++;
                                 }
                             }

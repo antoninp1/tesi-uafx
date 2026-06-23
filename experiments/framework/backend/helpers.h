@@ -9,6 +9,9 @@
 
 #include "common.h"
 
+/* Copia sicura di stringhe con troncamento */
+void safeStrCopy(char *dst, const char *src, size_t dstSize);
+
 /* Stampa separatore visuale con titolo opzionale */
 void printSeparator(const char *title);
 

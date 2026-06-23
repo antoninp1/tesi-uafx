@@ -834,3 +834,27 @@ input {
 .connection-error-toast button:hover {
   color: #7f1d1d;
 }
+
+.live-value-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 13px;
+}
+
+.live-value {
+  font-family: 'Courier New', monospace;
+  font-size: 14px;
+  font-weight: 600;
+  color: #6b7280;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: #f3f4f6;
+  transition: color 0.3s, background 0.3s;
+}
+
+.live-value--active {
+  color: #059669;
+  background: #d1fae5;
+}

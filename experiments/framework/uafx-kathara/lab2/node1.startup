@@ -1,0 +1,14 @@
+ip addr add 10.0.0.1/24 dev eth0
+ip link set eth0 up
+lldpd
+lldpcli configure lldp tx-interval 5
+sleep 25
+UAFX_APP_URI="urn:kathara:uafx:node1" \
+UAFX_APP_NAME="node1" \
+UAFX_SYS_NAME="node1" \
+UAFX_MGMT_ADDR="10.0.0.1" \
+UAFX_PUBLIC_URL="opc.tcp://10.0.0.1:4841" \
+UAFX_LDS_URL="opc.tcp://10.0.0.1:4840" \
+UAFX_PORT="4841" \
+UAFX_PUBSUB_IFACE="eth0" \
+/shared/temp_server &

@@ -20,33 +20,47 @@ typedef struct {
     bool      ok;
     char      errorMessage[256];
     UA_NodeId connectionEndpointId;   
-    UA_NodeId dataSetWriterNodeId;    
+    UA_NodeId dataSetWriterNodeId;  
+    UA_NodeId dataSetReaderNodeId;    
+  
 } EstablishResult;
 /* ── Descrizione di una connessione richiesta dal frontend ───── */
 typedef struct {
     /* Lato Publisher */
     char   publisherChassisId[64];
-    UA_NodeId publisherAcNodeId;
+    char publisherAcNodeId[64];
     char   publisherAcName[128];
-    UA_NodeId publisherFeNodeId;
+    char publisherFeNodeId[64];
     char   publisherFeName[128];
-    UA_NodeId publisherVariableNodeId;
-    char   publisherVariable[128];
+    char publisherVariableNodeId[64];
+    char   publisherVariableName[128];
+    char  publisherEndpointUrl[256];
 
-    /* Lato Subscriber */
+     /* Lato Subscriber */
     char   subscriberChassisId[64];
-    UA_NodeId subscriberAcNodeId;
+    char subscriberAcNodeId[64];
     char   subscriberAcName[128];
-    UA_NodeId subscriberFeNodeId;
+    char subscriberFeNodeId[64];
     char   subscriberFeName[128];
-    UA_NodeId subscriberVariableNodeId;
-    char   subscriberVariable[128];
-
+    char subscriberVariableNodeId[64];
+    char   subscriberVariableName[128];
+    char  subscriberEndpointUrl[256];
     /* Parametri PubSub */
+    char address[256];              /* Multicast address o unicast URL */
     double publishingInterval;    /* ms */
     char   qosCategory[32];       /* "PRIORITY" o "BEST_EFFORT" */
+    double messageReceiveTimeout; /* ms */
 } ConnectionRequest;
 
+/* ============================================================
+ * ConnectionResponse
+ * Serializzata in JSON e inviata al frontend
+ * ============================================================ */
+typedef struct {
+    bool   success;
+    char   errorMessage[256];
+    PubSubConnection connection;  /* popolata solo se success=true */
+} ConnectionResponse;
 /* ── Funzione principale ─────────────────────────────────────── */
 
 /*

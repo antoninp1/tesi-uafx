@@ -84,7 +84,7 @@ typedef struct {
 
 typedef struct {
     char      name[MAX_STR_LEN];
-    UA_NodeId nodeId;                        /* NodeId del CE sul server */
+    char nodeId[64];                        /* NodeId del CE sul server */
 
     /* Ruolo — letto da Mode sul server */
     uint32_t  mode;                          /* 0=Publisher 1=Subscriber 2=Both */
@@ -104,8 +104,8 @@ typedef struct {
 
 
     /* Reference ai nodi PubSub sul server */
-    UA_NodeId dataSetWriterRef;              /* ToDataSetWriter (Publisher) */
-    UA_NodeId dataSetReaderRef;              /* ToDataSetReader (Subscriber) */
+    char dataSetWriterRef[64];              /* ToDataSetWriter (Publisher) */
+    char dataSetReaderRef[64];              /* ToDataSetReader (Subscriber) */
 } ConnectionEndpoint;
 
 /* ============================================================

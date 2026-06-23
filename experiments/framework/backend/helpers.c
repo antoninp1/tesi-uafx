@@ -139,3 +139,9 @@ UA_BrowseResponse browseNode(UA_Client *client, UA_NodeId nodeId,
     bReq->nodesToBrowse[0].nodeClassMask = UA_NODECLASS_OBJECT | UA_NODECLASS_VARIABLE;
     return UA_Client_Service_browse(client, *bReq);
 }
+
+void safeStrCopy(char *dst, const char *src, size_t dstSize) {
+    if(!dst || !src || dstSize == 0) return;
+    strncpy(dst, src, dstSize - 1);
+    dst[dstSize - 1] = '\0';
+}

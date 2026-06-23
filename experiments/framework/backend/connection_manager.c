@@ -60,15 +60,6 @@ buildCommandMask(void) {
 }
 
 
-/* ── Scelta dell'indirizzo multicast ─────────────────────────── */
-/* Ogni connessione usa un indirizzo multicast diverso
- * nel range 224.0.5.x per evitare interferenze         */
-static UA_UInt16 s_multicastCounter = 1;
-
-static void buildMulticastUrl(char *buf, size_t bufLen) {
-    snprintf(buf, bufLen, "opc.udp://224.0.23.%u:4840/",
-             s_multicastCounter++);
-}
 
 
 
@@ -499,7 +490,8 @@ callEstablishConnections(
     const UA_NodeId acNodeId,
 
     UA_ConnectionEndpointConfigurationDataType *epCfg,
-    UA_PubSubCommunicationConfigurationDataType *commCfg
+    UA_PubSubCommunicationConfigurationDataType *commCfg,
+    bool isPublisher
 ){
 
     EstablishResult result = { false, "" };
@@ -673,8 +665,12 @@ UA_Variant_setArray(&inputArgs[3], NULL, 0,
                      "Comm result error: %s",
                      UA_StatusCode_name(commRes[0].result));
         } else if(commRes[0].configurationObjectsSize > 0) {
-            UA_NodeId_copy(&commRes[0].configurationObjects[0],
-                           &result.dataSetWriterNodeId);
+            if(isPublisher)
+                UA_NodeId_copy(&commRes[0].configurationObjects[0],
+                            &result.dataSetWriterNodeId);
+            else
+                UA_NodeId_copy(&commRes[0].configurationObjects[0],
+                            &result.dataSetReaderNodeId);
         }
     } else {
         printf("[CM] WARNING: output[3] empty or wrong type\n");
@@ -682,7 +678,6 @@ UA_Variant_setArray(&inputArgs[3], NULL, 0,
     printf("[CM] About to UA_Array_delete output\n");
     UA_Array_delete(output, outputSize, &UA_TYPES[UA_TYPES_VARIANT]);
     printf("[CM] UA_Array_delete done\n");
-    UA_Array_delete(output, outputSize, &UA_TYPES[UA_TYPES_VARIANT]);
 }
 
     UA_Client_disconnect(client);
@@ -696,30 +691,56 @@ UA_Variant_setArray(&inputArgs[3], NULL, 0,
 bool establishConnection(TopologyGraph *graph,
                          const ConnectionRequest *req, PubSubConnection *connOut) {
 
-    /* ── 1. Risolvi i nodi nel TopologyGraph ─────────────── */
-    int pubIdx = topologyFindNodeByChassisId(graph, req->publisherChassisId);
-    int subIdx = topologyFindNodeByChassisId(graph, req->subscriberChassisId);
+     /* ── 1. Parsa i NodeId AC dalle stringhe della request ── */
+    UA_NodeId publisherAcNodeId;
+    UA_NodeId subscriberAcNodeId;
+    UA_NodeId_init(&publisherAcNodeId);
+    UA_NodeId_init(&subscriberAcNodeId);
 
-    if(pubIdx < 0 || subIdx < 0) {
-        printf("[CM] ERROR: chassis ID not found in topology graph\n");
+    if(UA_NodeId_parse(&publisherAcNodeId,
+                       UA_STRING((char*)req->publisherAcNodeId)) != UA_STATUSCODE_GOOD) {
+        printf("[CM] ERROR: cannot parse publisherAcNodeId '%s'\n",
+               req->publisherAcNodeId);
+        return false;
+    }
+    if(UA_NodeId_parse(&subscriberAcNodeId,
+                       UA_STRING((char*)req->subscriberAcNodeId)) != UA_STATUSCODE_GOOD) {
+        printf("[CM] ERROR: cannot parse subscriberAcNodeId '%s'\n",
+               req->subscriberAcNodeId);
+        UA_NodeId_clear(&publisherAcNodeId);
         return false;
     }
 
-    TopologyNode *pubNode = &graph->nodes[pubIdx];  
-    TopologyNode *subNode = &graph->nodes[subIdx];
+    /* Parsa anche i NodeId delle variabili */
+    UA_NodeId pubVarNodeId;
+    UA_NodeId subVarNodeId;
+    UA_NodeId_init(&pubVarNodeId);
+    UA_NodeId_init(&subVarNodeId);
 
-    if(!pubNode->reachable || !subNode->reachable) {
-        printf("[CM] ERROR: one or both nodes are not reachable\n");
+    if(UA_NodeId_parse(&pubVarNodeId,
+                       UA_STRING((char*)req->publisherVariableNodeId)) != UA_STATUSCODE_GOOD) {
+        printf("[CM] ERROR: cannot parse publisherVariableNodeId '%s'\n",
+               req->publisherVariableNodeId);
+        UA_NodeId_clear(&publisherAcNodeId);
+        UA_NodeId_clear(&subscriberAcNodeId);
+        return false;
+    }
+    if(UA_NodeId_parse(&subVarNodeId,
+                       UA_STRING((char*)req->subscriberVariableNodeId)) != UA_STATUSCODE_GOOD) {
+        printf("[CM] ERROR: cannot parse subscriberVariableNodeId '%s'\n",
+               req->subscriberVariableNodeId);
+        UA_NodeId_clear(&publisherAcNodeId);
+        UA_NodeId_clear(&subscriberAcNodeId);
+        UA_NodeId_clear(&pubVarNodeId);
         return false;
     }
 
-    /* ── 2. Genera gli ID PubSub ─────────────────────────── */
+     /* ── 2. Genera gli ID PubSub ─────────────────────────── */
     UA_UInt16 publisherId     = nextId();
     UA_UInt16 writerGroupId   = nextId();
     UA_UInt16 dataSetWriterId = nextId();
 
-    char multicastUrl[64];
-    buildMulticastUrl(multicastUrl, sizeof(multicastUrl));
+    const char *multicastUrl = req->address;
 
     printf("[CM] New connection:\n");
     printf("[CM]   PublisherId=%u WriterGroupId=%u DataSetWriterId=%u\n",
@@ -731,81 +752,68 @@ bool establishConnection(TopologyGraph *graph,
     UA_PubSubConfiguration2DataType pubCfg =
         buildPublisherConfig(publisherId, writerGroupId, dataSetWriterId,
                              multicastUrl, "enp0s31f6",
-                             req->publisherVariable,
-                             req->publishingInterval,req->publisherVariableNodeId);
+                             req->publisherVariableName,
+                             req->publishingInterval, pubVarNodeId);
 
     UA_PubSubCommunicationConfigurationDataType pubCommCfg;
     memset(&pubCommCfg, 0, sizeof(pubCommCfg));
-    pubCommCfg.pubSubConfiguration = pubCfg; 
-    pubCommCfg.requireCompleteUpdate   = false;
-    
-    printf("[CM] BEFORE call: pubCommCfg.pubSubConfiguration.connectionsSize=%zu pdsSize=%zu\n",
-       pubCommCfg.pubSubConfiguration.connectionsSize,
-       pubCommCfg.pubSubConfiguration.publishedDataSetsSize);
+    pubCommCfg.pubSubConfiguration   = pubCfg;
+    pubCommCfg.requireCompleteUpdate = false;
+
        
-    /* ── 4. Chiama EstablishConnections sul Publisher ─────── */
+     /* ── 4. Chiama EstablishConnections sul Publisher ─────── */
     printf("[CM] Calling EstablishConnections on Publisher (%s)...\n",
-           pubNode->endpointUrl);
+           req->publisherEndpointUrl);
 
     UA_ConnectionEndpointConfigurationDataType pubEpCfg =
-    buildEndpointConfiguration(
-        "CE_Pub_001",
-        req->publisherVariableNodeId,
-        true
-    );
+        buildEndpointConfiguration("CE_Pub_001", pubVarNodeId, true);
 
     EstablishResult pubResult =
-    callEstablishConnections(
-        pubNode->endpointUrl,
-        req->publisherAcName,
-        req->publisherAcNodeId,
-
-        &pubEpCfg,
-        &pubCommCfg
-    );
-    //UA_PubSubConfiguration2DataType_clear(&pubCfg);
+        callEstablishConnections(req->publisherEndpointUrl,
+                                 req->publisherAcName,
+                                 publisherAcNodeId,
+                                 &pubEpCfg, &pubCommCfg,true);
 
     if(!pubResult.ok) {
         printf("[CM] Publisher failed: %s\n", pubResult.errorMessage);
+        UA_NodeId_clear(&publisherAcNodeId);
+        UA_NodeId_clear(&subscriberAcNodeId);
+        UA_NodeId_clear(&pubVarNodeId);
+        UA_NodeId_clear(&subVarNodeId);
         return false;
     }
     printf("[CM] Publisher: OK\n");
 
-    /* ── 5. Costruisci configurazione Subscriber ──────────── */
+     /* ── 5. Costruisci configurazione Subscriber ──────────── */
     UA_PubSubConfiguration2DataType subCfg =
         buildSubscriberConfig(publisherId, writerGroupId, dataSetWriterId,
                               multicastUrl, "enp0s31f6",
-                              req->publisherVariable,
-                              req->subscriberVariableNodeId,
-                              req->subscriberVariable
-                            );
+                              req->publisherVariableName,
+                              subVarNodeId,
+                              req->subscriberVariableName);
 
     UA_PubSubCommunicationConfigurationDataType subCommCfg;
     memset(&subCommCfg, 0, sizeof(subCommCfg));
     subCommCfg.pubSubConfiguration   = subCfg;
     subCommCfg.requireCompleteUpdate = false;
 
-    /* ── 6. Chiama EstablishConnections sul Subscriber ────── */
+   /* ── 6. Chiama EstablishConnections sul Subscriber ────── */
     printf("[CM] Calling EstablishConnections on Subscriber (%s)...\n",
-           subNode->endpointUrl);
-    
+           req->subscriberEndpointUrl);
+
     UA_ConnectionEndpointConfigurationDataType subEpCfg =
-    buildEndpointConfiguration(
-        "CE_Sub_001",
-        req->subscriberVariableNodeId,
-        false
-    );
+        buildEndpointConfiguration("CE_Sub_001", subVarNodeId, false);
 
     EstablishResult subResult =
-    callEstablishConnections(
-        subNode->endpointUrl,
-        req->subscriberAcName,
-        req->subscriberAcNodeId,
+        callEstablishConnections(req->subscriberEndpointUrl,
+                                 req->subscriberAcName,
+                                 subscriberAcNodeId,
+                                 &subEpCfg, &subCommCfg,false);
 
-        &subEpCfg,
-        &subCommCfg
-    );
-    //UA_PubSubConfiguration2DataType_clear(&subCfg);
+    UA_NodeId_clear(&publisherAcNodeId);
+    UA_NodeId_clear(&subscriberAcNodeId);
+    UA_NodeId_clear(&pubVarNodeId);
+    UA_NodeId_clear(&subVarNodeId);
 
     if(!subResult.ok) {
         printf("[CM] Subscriber failed: %s\n", subResult.errorMessage);
@@ -819,21 +827,41 @@ bool establishConnection(TopologyGraph *graph,
     memset(&pubCeInfo, 0, sizeof(pubCeInfo));
     strncpy(pubCeInfo.name, "PublisherEndpoint", MAX_STR_LEN - 1);
     pubCeInfo.mode   = 0;  /* Publisher */
-    UA_NodeId_copy(&pubResult.connectionEndpointId, &pubCeInfo.nodeId);
-    UA_NodeId_copy(&pubResult.dataSetWriterNodeId,  &pubCeInfo.dataSetWriterRef);
-    strncpy(pubCeInfo.status, "Operational", MAX_STR_LEN - 1);
-    strncpy(pubCeInfo.linkedVariable, req->publisherVariable, MAX_STR_LEN - 1);
+
+    UA_String nodeIdStr = UA_STRING_NULL;
+    UA_NodeId_print(&pubResult.connectionEndpointId, &nodeIdStr);
+    snprintf(pubCeInfo.nodeId, sizeof(pubCeInfo.nodeId), "%.*s",
+         (int)nodeIdStr.length, nodeIdStr.data);
+    UA_String_clear(&nodeIdStr);
+
+    UA_NodeId_print(&pubResult.dataSetWriterNodeId, &nodeIdStr);
+    snprintf(pubCeInfo.dataSetWriterRef, sizeof(pubCeInfo.dataSetWriterRef), "%.*s",
+         (int)nodeIdStr.length, nodeIdStr.data);
+    UA_String_clear(&nodeIdStr);
 
     ConnectionEndpoint subCeInfo;
     memset(&subCeInfo, 0, sizeof(subCeInfo));
     strncpy(subCeInfo.name, "SubscriberEndpoint", MAX_STR_LEN - 1);
     subCeInfo.mode   = 1;  /* Subscriber */
-    UA_NodeId_copy(&subResult.connectionEndpointId, &subCeInfo.nodeId);
-    UA_NodeId_copy(&subResult.dataSetWriterNodeId,  &subCeInfo.dataSetReaderRef);
-    /* dataSetWriterRef del subscriber punta al DSW del publisher */
-    UA_NodeId_copy(&pubResult.dataSetWriterNodeId,  &subCeInfo.dataSetWriterRef);
+   /* Subscriber CE */
+    UA_NodeId_print(&subResult.connectionEndpointId, &nodeIdStr);
+    snprintf(subCeInfo.nodeId, sizeof(subCeInfo.nodeId), "%.*s",
+            (int)nodeIdStr.length, nodeIdStr.data);
+    UA_String_clear(&nodeIdStr);
+
+    UA_NodeId_print(&subResult.dataSetReaderNodeId, &nodeIdStr);
+    snprintf(subCeInfo.dataSetReaderRef, sizeof(subCeInfo.dataSetReaderRef), "%.*s",
+            (int)nodeIdStr.length, nodeIdStr.data);
+    UA_String_clear(&nodeIdStr);
+
+    UA_NodeId_print(&pubResult.dataSetWriterNodeId, &nodeIdStr);
+    snprintf(subCeInfo.dataSetWriterRef, sizeof(subCeInfo.dataSetWriterRef), "%.*s",
+            (int)nodeIdStr.length, nodeIdStr.data);
+    UA_String_clear(&nodeIdStr);
     strncpy(subCeInfo.status, "Operational", MAX_STR_LEN - 1);
-    strncpy(subCeInfo.linkedVariable, req->subscriberVariable, MAX_STR_LEN - 1);
+    strncpy(subCeInfo.linkedVariable, req->subscriberVariableName, MAX_STR_LEN - 1);
+    
+    
 
     PubSubConnection conn;
     memset(&conn, 0, sizeof(conn));
@@ -843,9 +871,9 @@ bool establishConnection(TopologyGraph *graph,
     conn.writerGroupId    = writerGroupId;
     conn.dataSetWriterId  = dataSetWriterId;
     conn.publishingInterval = req->publishingInterval;
-    strncpy(conn.multicastUrl, multicastUrl, MAX_STR_LEN - 1);
-
-   int connIdx = topologyAddLogicalConnection(graph, &conn);
+    strncpy(conn.multicastUrl, req->address, MAX_STR_LEN - 1);
+   
+    int connIdx = topologyAddLogicalConnection(graph, &conn);
     if(connIdx < 0) {
         printf("[CM] WARNING: logical connections array full\n");
     } else {
