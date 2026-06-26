@@ -1,1 +1,0 @@
-/usr/bin/cc -Wl,--dependency-file=CMakeFiles/uafx_server.dir/link.d CMakeFiles/uafx_server.dir/server.c.o -o uafx_server  -luafx_types
