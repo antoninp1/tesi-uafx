@@ -14,17 +14,26 @@
  *   gcc -o temp_server uafx_temperature_server.c my_uafx_types.c open62541.c -pthread
  * ============================================================ */
 
-#include "open62541.h"
+#define _GNU_SOURCE
+#include <open62541/server.h>
+#include <open62541/server_config_default.h>
+#include <open62541/server_pubsub.h>
+#include <open62541/client_config_default.h>
 #include "types_di_generated.h"
 #include "types_uafx_data_generated.h"
 #include "types_uafx_ac_generated.h"
-#include "my_uafx_model.h"
-#include "establish_connection2.h"
+#include "namespace_di_generated.h"
+#include "namespace_uafx_data_generated.h"
+#include "namespace_uafx_ac_generated.h"
 #include "establish_connection.h"
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sched.h>
+#include <sys/mman.h>
+#include <errno.h>
 #include <time.h>
+#include <getopt.h>
 
 /* ─── Namespace index di FX/AC nel server ─────────────────── */
 #define FXAC_NS_URI   "http://opcfoundation.org/UA/FX/AC/"
@@ -35,8 +44,18 @@
 #define FXAC_ID_FUNCTIONALENTITYTYPE     4
 
 #define NS_LOCAL 1
-#define LDS_URL          "opc.tcp://192.168.17.73:4840"
-#define SERVER_PUBLIC_URL "opc.tcp://192.168.17.73:4841"
+#define LDS_URL          "opc.tcp://192.168.17.112:4840"
+#define SERVER_PUBLIC_URL "opc.tcp://192.168.17.92:4841"
+
+#define PUBLISH_INTERFACE "enp43s0"
+#define PUBLISH_URL "opc.eth://03-00-00-00-00-03:10.6"
+
+#define PUBLISHING_INTERVAL 1
+#define AUTOSTART_PUBSUB 1
+
+#define CYCLE_TIME_NS ((long)(PUBLISHING_INTERVAL) * 1000000L)  /* PUBLISHING_INTERVAL is in ms */
+
+#define SCHED_PRIORITY 80
 
 static UA_NodeId connectionIdent, publishedDataSetIdent, writerGroupIdent,
     dataSetWriterIdent;
@@ -47,6 +66,51 @@ static UA_NodeId temperatureNodeId = {0};
 static void stopHandler(int sig) {
     printf("\n[SERVER] Shutdown signal received\n");
     running = false;
+}
+
+typedef struct {
+    UA_Boolean rt;
+    UA_Boolean rtLog;
+    int rtCore;
+} CliOptions;
+
+static CliOptions parseArgs(int argc, char **argv) {
+    CliOptions opts = { .rt = false, .rtLog = false, .rtCore = 2};
+    static struct option longOpts[] = {
+        {"rt",      no_argument,       0, 'r'},
+        {"rt-core", required_argument, 0, 'c'},
+        {"help",    no_argument,       0, 'h'},
+        {0, 0, 0, 0}
+    };
+    int opt;
+    while((opt = getopt_long(argc, argv, "rc:h", longOpts, NULL)) != -1) {
+        switch(opt) {
+            case 'r': opts.rt = true; break;
+            case 'c': opts.rtCore = atoi(optarg); break;
+            case 'h':
+                printf("Usage: %s [--rt] [--rt-core=N]\n", argv[0]);
+                exit(0);
+            default:
+                fprintf(stderr, "Unknown option. Please use --help.\n");
+                exit(1);
+        }
+    }
+    return opts;
+}
+
+static void setupRealtime(int rtCore) {
+    if(mlockall(MCL_CURRENT | MCL_FUTURE) != 0)
+        perror("[RT] mlockall failed (ran as root ?)");
+
+    struct sched_param sp = { .sched_priority = SCHED_PRIORITY };
+    if(sched_setscheduler(0, SCHED_FIFO, &sp) != 0)
+        perror("[RT] sched_setscheduler failed (ran as root ?)");
+
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(rtCore, &cpuset);
+    if(sched_setaffinity(0, sizeof(cpuset), &cpuset) != 0)
+        perror("[RT] sched_setaffinity failed");
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -284,7 +348,7 @@ static void buildNetworkInterfaces(UA_Server *server) {
     /* ============ enp43s0 → vicino edge-up-4 ============ */
     {
         UA_NodeId iface = addBaseObject(server, niFolder, NS_LOCAL,
-                                        "enp43s0", "Physical interface enp43s0");
+                                        "enp43s0", "Physical interface enp43s0.10");
         addStringVariable(server, iface, NS_LOCAL, "AdminStatus", "up");
         addStringVariable(server, iface, NS_LOCAL, "OperStatus",  "up");
         addStringVariable(server, iface, NS_LOCAL, "PhysAddress", "00:07:32:ae:79:13");
@@ -367,9 +431,9 @@ static void buildNetworkInterfaces(UA_Server *server) {
                          &UA_TYPES[UA_TYPES_NETWORKADDRESSURLDATATYPE]);
     /* Changed to static publisherId from random generation to identify
      * the publisher on Subscriber side */
-    	connectionConfig.publisherIdType = UA_PUBLISHERIDTYPE_UINT16;
-    	connectionConfig.publisherId.uint16 = 2234;
-	connectionConfig.enabled = true;
+    	connectionConfig.publisherId.idType = UA_PUBLISHERIDTYPE_UINT16;
+    	connectionConfig.publisherId.id.uint16 = 2234;
+	connectionConfig.enabled = false;
     	UA_Server_addPubSubConnection(server, &connectionConfig, &connectionIdent);
 }
 
@@ -400,20 +464,15 @@ static void addDataSetField(UA_Server *server) {
                               &dataSetFieldConfig, &dataSetFieldIdent);
 }
 
-	static void addWriterGroup(UA_Server *server) {
-    /* Now we create a new WriterGroupConfig and add the group to the existing
-     * PubSubConnection. */
+static void addWriterGroup(UA_Server *server) {
     UA_WriterGroupConfig writerGroupConfig;
     memset(&writerGroupConfig, 0, sizeof(UA_WriterGroupConfig));
     writerGroupConfig.name = UA_STRING("Demo WriterGroup");
-    writerGroupConfig.publishingInterval = 5000;
+    writerGroupConfig.publishingInterval = PUBLISHING_INTERVAL;
     writerGroupConfig.writerGroupId = 100;
-    writerGroupConfig.enabled = true; 
+    writerGroupConfig.enabled = false;
     writerGroupConfig.encodingMimeType = UA_PUBSUB_ENCODING_UADP;
 
-    /* Change message settings of writerGroup to send PublisherId,
-     * WriterGroupId in GroupHeader and DataSetWriterId in PayloadHeader
-     * of NetworkMessage */
     UA_UadpWriterGroupMessageDataType writerGroupMessage;
     UA_UadpWriterGroupMessageDataType_init(&writerGroupMessage);
     writerGroupMessage.networkMessageContentMask =
@@ -422,10 +481,6 @@ static void addDataSetField(UA_Server *server) {
                                            UA_UADPNETWORKMESSAGECONTENTMASK_WRITERGROUPID |
                                            UA_UADPNETWORKMESSAGECONTENTMASK_PAYLOADHEADER);
 
-    /* The configuration flags for the messages are encapsulated inside the
-     * message- and transport settings extension objects. These extension
-     * objects are defined by the standard. e.g.
-     * UadpWriterGroupMessageDataType */
     UA_ExtensionObject_setValue(&writerGroupConfig.messageSettings, &writerGroupMessage,
                                 &UA_TYPES[UA_TYPES_UADPWRITERGROUPMESSAGEDATATYPE]);
 
@@ -444,9 +499,9 @@ addDataSetWriter(UA_Server *server) {
     dataSetWriterConfig.keyFrameCount = 10;
     UA_Server_addDataSetWriter(server, writerGroupIdent, publishedDataSetIdent,
                                &dataSetWriterConfig, &dataSetWriterIdent);
+
 }
 
- /* callback eseguita quando il client chiama il metodo */
 static UA_StatusCode startPublisherCallback(
         UA_Server *server, const UA_NodeId *sessionId,
         void *sessionContext, const UA_NodeId *methodId,
@@ -455,21 +510,21 @@ static UA_StatusCode startPublisherCallback(
         const UA_Variant *input, size_t outputSize,
         UA_Variant *output) {
 
-    printf("[SERVER] StartPublisher called — configuring PubSub...\n");
-
-    /* chiama le funzioni già scritte nel server */
     addPubSubConnection(server, &transportProfile, &networkAddressUrl);
     addPublishedDataSet(server);
     addDataSetField(server);
     addWriterGroup(server);
     addDataSetWriter(server);
-    UA_Server_freezeWriterGroupConfiguration(server, writerGroupIdent);
-    UA_Server_setWriterGroupOperational(server, writerGroupIdent);
+    UA_Server_enableDataSetWriter(server, dataSetWriterIdent);
+    //UA_Server_setWriterGroupOperational(server, writerGroupIdent);
+    UA_Server_enableWriterGroup(server, writerGroupIdent);
+    UA_Server_enablePubSubConnection(server, connectionIdent);
     //addConnectionEndpoint(server);
 
     printf("[SERVER] Publisher started\n");
     return UA_STATUSCODE_GOOD;
 }
+
 
 
 /*========══════════════════════════════════════════════════════
@@ -553,7 +608,7 @@ static void buildUAFXAddressSpace(UA_Server *server) {
 UA_NodeId outputFolder = addFolder(server, feNode, NS_LOCAL, "OutputData");
     temperatureNodeId = addTemperatureVariable(server, outputFolder, NS_LOCAL, "Temperature");
 
-    UA_NodeId inputFolder = addFolder(server, feNode, NS_LOCAL, "InputData");
+    addFolder(server, feNode, NS_LOCAL, "InputData");
    // addInputVariable(server,inputFolder, NS_LOCAL, "Density");
    // printf("[SERVER]   + InputData/ReceivedTemperature (target for PubSub subscriber)\n");
 
@@ -570,7 +625,7 @@ UA_NodeId outputFolder = addFolder(server, feNode, NS_LOCAL, "OutputData");
     buildNetworkInterfaces(server);
 
 }
-    
+
 
 
 
@@ -578,7 +633,7 @@ UA_NodeId outputFolder = addFolder(server, feNode, NS_LOCAL, "OutputData");
  * MAIN
  * ═══════════════════════════════════════════════════════════ */
 
-int main(void) {
+int main(int argc, char **argv) {
     signal(SIGINT,  stopHandler);
     signal(SIGTERM, stopHandler);
     srand(time(NULL));
@@ -587,14 +642,15 @@ int main(void) {
     printf("========================================================\n");
     printf("  OPC UA FX Temperature Server (with LLDP)\n");
     printf("========================================================\n\n");
+    CliOptions opts = parseArgs(argc, argv);
 
     /* ─── Crea server ────────────────────────────────────────── */
     UA_Server *server = UA_Server_new();
     UA_ServerConfig *config = UA_Server_getConfig(server);
      transportProfile =
-        UA_STRING("http://opcfoundation.org/UA-Profile/Transport/pubsub-udp-uadp");
-     networkAddressUrl.networkInterface = UA_STRING("enp0s31f6");
-    networkAddressUrl.url = UA_STRING("opc.udp://224.0.0.22:4840/");
+        UA_STRING("http://opcfoundation.org/UA-Profile/Transport/pubsub-eth-uadp");
+     networkAddressUrl.networkInterface = UA_STRING(PUBLISH_INTERFACE);
+    networkAddressUrl.url = UA_STRING(PUBLISH_URL);
     static UA_DataTypeArray customDataTypesAC = {
         NULL,
         UA_TYPES_UAFX_AC_COUNT,
@@ -649,8 +705,11 @@ int main(void) {
 
     /* ─── Carica i tipi UAFX dal nodeset generato ────────────── */
     printf("[SERVER] Loading UAFX nodesets...\n");
-    UA_StatusCode retval = my_uafx_model(server);
-    if(retval != UA_STATUSCODE_GOOD) {
+    UA_StatusCode retval = namespace_di_generated(server);
+    UA_StatusCode retval_data = namespace_uafx_data_generated(server);
+    UA_StatusCode retval_ac = namespace_uafx_ac_generated(server);
+
+    if(retval != UA_STATUSCODE_GOOD || retval_data != UA_STATUSCODE_GOOD || retval_ac != UA_STATUSCODE_GOOD) {
         printf("[WARNING] Address Space loaded with some missing sub-nodes (Code: %s).\n",
                UA_StatusCode_name(retval));
         printf("[WARNING] This is normal for massive UAFX NodeSets. Continuing anyway...\n\n");
@@ -663,7 +722,20 @@ int main(void) {
 
 
 
-    /* Run the server */  
+    /* Run the server */
+#if AUTOSTART_PUBSUB
+    addPubSubConnection(server, &transportProfile, &networkAddressUrl);
+    addPublishedDataSet(server);
+    addDataSetField(server);
+    addWriterGroup(server);
+    addDataSetWriter(server);
+    UA_Server_enableDataSetWriter(server, dataSetWriterIdent);
+    //UA_Server_setWriterGroupOperational(server, writerGroupIdent);
+    UA_Server_enableWriterGroup(server, writerGroupIdent);
+    UA_Server_enablePubSubConnection(server, connectionIdent);
+    //addConnectionEndpoint(server);
+    printf("[SERVER] Publisher started automatically\n");
+#endif
 
     /* ─── Avvia server ───────────────────────────────────────── */
     retval = UA_Server_run_startup(server);
@@ -711,8 +783,31 @@ int main(void) {
     printf("Press Ctrl+C to stop\n\n");
 
     /* ─── Loop principale ────────────────────────────────────── */
-    while(running) {
-        UA_Server_run_iterate(server, true);
+    if (opts.rt) {
+        setupRealtime(opts.rtCore);
+
+        struct timespec next;
+        clock_gettime(CLOCK_MONOTONIC, &next);
+        while(running) {
+            /* avance d'un cycle complet, jamais d'un delta depuis "maintenant" :
+            * ça évite toute dérive cumulative au fil des itérations */
+            next.tv_nsec += CYCLE_TIME_NS;
+            while(next.tv_nsec >= 1000000000L) {
+                next.tv_nsec -= 1000000000L;
+                next.tv_sec++;
+            }
+
+            int rc;
+            do {
+                rc = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next, NULL);
+            } while(rc == EINTR);
+
+            UA_Server_run_iterate(server, false);
+        }
+    } else {
+        while(running) {
+            UA_Server_run_iterate(server, true);
+        }
     }
 
     printf("\n[SERVER] Shutting down...\n");

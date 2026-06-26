@@ -29,6 +29,7 @@
  * Altri bit: loggati come no-op.
  * ============================================================ */
 
+#include <open62541/server_pubsub.h>
 #include "establish_connection.h"
 #include "types_uafx_data_generated.h"
 #include "types_uafx_ac_generated.h"
@@ -249,7 +250,7 @@ static bool extractPubSub(const UA_PubSubConfiguration2DataType *cfg,
     printf("[EC]   connectionsSize=%zu publishedDataSetsSize=%zu\n",
            cfg->connectionsSize, cfg->publishedDataSetsSize);
     if(cfg->connectionsSize == 0) return false;
-    
+
     if(!cfg || cfg->connectionsSize == 0) return false;
     const UA_PubSubConnectionDataType *conn = &cfg->connections[0];
 
@@ -374,8 +375,8 @@ static UA_StatusCode setupPubSub(UA_Server *server, const PsParams *p,
     UA_Variant_setScalar(&cc.address, &addr,
         &UA_TYPES[UA_TYPES_NETWORKADDRESSURLDATATYPE]);
 
-    cc.publisherIdType = UA_PUBLISHERIDTYPE_UINT32;
-    cc.publisherId.uint32 = p->isPublisher ? p->publisherId : p->publisherId + 1000;
+    cc.publisherId.idType = UA_PUBLISHERIDTYPE_UINT32;
+    cc.publisherId.id.uint32 = p->isPublisher ? p->publisherId : p->publisherId + 1000;
 
     UA_NodeId connId;
     rc = UA_Server_addPubSubConnection(server, &cc, &connId);
@@ -449,17 +450,24 @@ static UA_StatusCode setupPubSub(UA_Server *server, const PsParams *p,
         memset(&drc, 0, sizeof(drc));
         drc.name = UA_STRING("UAFX_DSR");
         UA_UInt32 pid = p->publisherId;
-        drc.publisherId.type = &UA_TYPES[UA_TYPES_UINT32];
-        drc.publisherId.data = &pid;
+        drc.publisherId.idType = UA_PUBLISHERIDTYPE_UINT32;
+        drc.publisherId.id.uint32 = pid;
         drc.writerGroupId = p->writerGroupId;
         drc.dataSetWriterId = p->dataSetWriterId;
-
+        /*
         UA_FieldTargetVariable *tv =
             (UA_FieldTargetVariable *)UA_calloc(1, sizeof(UA_FieldTargetVariable));
         tv[0].targetVariable.attributeId = UA_ATTRIBUTEID_VALUE;
         UA_NodeId_copy(&varId, &tv[0].targetVariable.targetNodeId);
         drc.subscribedDataSet.subscribedDataSetTarget.targetVariablesSize = 1;
         drc.subscribedDataSet.subscribedDataSetTarget.targetVariables = tv;
+        */
+        UA_FieldTargetDataType *tv =
+            (UA_FieldTargetDataType *)UA_calloc(1, sizeof(UA_FieldTargetDataType));
+        tv[0].attributeId = UA_ATTRIBUTEID_VALUE;
+        UA_NodeId_copy(&varId, &tv[0].targetNodeId);
+        drc.subscribedDataSet.target.targetVariablesSize = 1;
+        drc.subscribedDataSet.target.targetVariables = tv;
         /* DataSetMetaData: 1 field di tipo Float */
         UA_DataSetMetaDataType_init(&drc.dataSetMetaData);
         drc.dataSetMetaData.name = UA_STRING("UAFX_DataSet");
@@ -484,7 +492,7 @@ static UA_StatusCode setupPubSub(UA_Server *server, const PsParams *p,
         drc.messageSettings.content.decoded.data = &dsrMsg;
 
         rc = UA_Server_addDataSetReader(server, *outGroup, &drc, outDswOrDsr);
-        UA_NodeId_clear(&tv[0].targetVariable.targetNodeId);
+        UA_NodeId_clear(&tv[0].targetNodeId);
         UA_free(tv);
         if(rc != UA_STATUSCODE_GOOD) return rc;
         printf("[EC]     + DataSetReader (filter pubId=%u wg=%u dsw=%u)\n",
@@ -576,11 +584,9 @@ static UA_StatusCode processOnePair(UA_Server *server, UA_NodeId feNode,
         printf("[EC]   → EnableCommunicationCmd\n");
         if(!UA_NodeId_isNull(&groupNode)) {
             if(ps.isPublisher) {
-                UA_Server_freezeWriterGroupConfiguration(server, groupNode);
                 UA_Server_setWriterGroupOperational(server, groupNode);
                 printf("[EC]     + WriterGroup ENABLED\n");
             } else {
-                UA_Server_freezeReaderGroupConfiguration(server, groupNode);
                 UA_Server_setReaderGroupOperational(server, groupNode);
                 printf("[EC]     + ReaderGroup ENABLED\n");
             }

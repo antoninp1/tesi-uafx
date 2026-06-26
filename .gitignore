@@ -1,8 +1,22 @@
 *.exe
-*.o
 build/
 .vscode/
 *.swp
 open62541.c
 open62541.h
 *.env
+
+# Builds CMake (open62541 + uafx_types + exécutables générés)
+build/
+**/build/
+
+# Au cas où un build serait lancé en mode in-source par erreur
+src_generated/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+compile_commands.json
+*.o
+*.a
+*.so

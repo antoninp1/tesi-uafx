@@ -13,15 +13,25 @@
  *   gcc -o temp_server uafx_temperature_server.c my_uafx_types.c open62541.c -pthread
  * ============================================================ */
 
-#include "open62541.h"
+#define _GNU_SOURCE
+#include <open62541/server.h>
+#include <open62541/server_config_default.h>
+#include <open62541/server_pubsub.h>
+#include <open62541/client_config_default.h>
 #include "types_di_generated.h"
 #include "types_uafx_data_generated.h"
 #include "types_uafx_ac_generated.h"
-#include "my_uafx_model.h"
+#include "namespace_di_generated.h"
+#include "namespace_uafx_data_generated.h"
+#include "namespace_uafx_ac_generated.h"
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <getopt.h>
+#include <sched.h>
+#include <sys/mman.h>
+#include <errno.h>
 #include "establish_connection.h"
 /* ─── Namespace index di FX/AC nel server ─────────────────── */
 #define FXAC_NS_URI   "http://opcfoundation.org/UA/FX/AC/"
@@ -32,13 +42,72 @@
 #define FXAC_ID_FUNCTIONALENTITYTYPE     4
 
 #define NS_LOCAL 1
-#define LDS_URL          "opc.tcp://192.168.17.73:4840"
+#define LDS_URL          "opc.tcp://192.168.17.112:4840"
 #define SERVER_PUBLIC_URL "opc.tcp://192.168.17.184:4841"
+
+#define AUTOSTART_PUBSUB 1
+
+#define SCHED_PRIORITY 80
+
 static volatile UA_Boolean running = true;
 
 static void stopHandler(int sig) {
     printf("\n[SERVER] Shutdown signal received\n");
     running = false;
+}
+
+typedef struct {
+    UA_Boolean rt;
+    UA_Boolean rtLog;
+    int rtCore;
+    int schedPrio;
+    UA_Boolean autostart;
+
+} CliOptions;
+
+static CliOptions parseArgs(int argc, char **argv) {
+    CliOptions opts = { .rt = false, .rtLog = false, .rtCore = 2};
+    static struct option longOpts[] = {
+        {"rt",      no_argument,       0, 'r'},
+        {"rt-log",      no_argument,       0, 'l'},
+        {"rt-core", required_argument, 0, 'c'},
+        {"schedule-priority", required_argument, 0, 'p'},
+        {"autostart", no_argument, 0, 'a'},
+        {"help",    no_argument,       0, 'h'},
+        {0, 0, 0, 0}
+    };
+    int opt;
+    while((opt = getopt_long(argc, argv, "rc:h", longOpts, NULL)) != -1) {
+        switch(opt) {
+            case 'r': opts.rt = true; break;
+            case 'l': opts.rtLog = true; break;
+            case 'c': opts.rtCore = atoi(optarg); break;
+            case 'p': opts.schedPrio = atoi(optarg); break;
+            case 'a': opts.autostart = true; break;
+            case 'h':
+                printf("Usage: %s [--rt] [--rt-log] [--rt-core=N] [--schedule-priority=N] [--autostart]\n", argv[0]);
+                exit(0);
+            default:
+                fprintf(stderr, "Unknown option. Please use --help.\n");
+                exit(1);
+        }
+    }
+    return opts;
+}
+
+static void setupRealtime(int rtCore) {
+    if(mlockall(MCL_CURRENT | MCL_FUTURE) != 0)
+        perror("[RT] mlockall a échoué (lancé en root ?)");
+
+    struct sched_param sp = { .sched_priority = 80 };
+    if(sched_setscheduler(0, SCHED_FIFO, &sp) != 0)
+        perror("[RT] sched_setscheduler a échoué (lancé en root ?)");
+
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(rtCore, &cpuset);   /* ajuste selon ta machine */
+    if(sched_setaffinity(0, sizeof(cpuset), &cpuset) != 0)
+        perror("[RT] sched_setaffinity a échoué");
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -229,7 +298,16 @@ static UA_NodeId addDensityVariable(UA_Server *server, UA_NodeId parent,
     return newNode;
 }
 
-static UA_NodeId addInputVariable(UA_Server *server, UA_NodeId parent, UA_UInt16 ns, const char *name){
+static void logReceivedUpdate(UA_Server *server, const UA_NodeId *sessionId,
+                               void *sessionContext, const UA_NodeId *nodeId,
+                               void *nodeContext, const UA_NumericRange *range,
+                               const UA_DataValue *data) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    printf("[RX] %ld.%09ld\n", (long)ts.tv_sec, (long)ts.tv_nsec);
+}
+
+static UA_NodeId addInputVariable(UA_Server *server, UA_NodeId parent, UA_UInt16 ns, const char *name, UA_Boolean logging){
     UA_VariableAttributes inputAttr = UA_VariableAttributes_default;
      inputAttr.displayName = lt(name);
     inputAttr.description = lt("Temperature recived in C");
@@ -244,6 +322,13 @@ static UA_NodeId addInputVariable(UA_Server *server, UA_NodeId parent, UA_UInt16
         qn(ns, "Temperature"),
         UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE),
         inputAttr, NULL, &receivedTempNodeId);
+
+    if (logging) {
+        UA_ValueCallback rxCallback;
+        rxCallback.onRead = NULL;
+        rxCallback.onWrite = logReceivedUpdate;
+        UA_Server_setVariableNode_valueCallback(server, receivedTempNodeId, rxCallback);
+    }
 
     addStringVariable(server, receivedTempNodeId, NS_LOCAL, "EngineeringUnits", "\xC2\xB0""C");
 return receivedTempNodeId;
@@ -376,12 +461,12 @@ static void setupSubscriber(UA_Server *server) {
     memset(&connConfig, 0, sizeof(connConfig));
     connConfig.name = UA_STRING("UDP Multicast Subscriber Connection");
     connConfig.transportProfileUri =
-        UA_STRING("http://opcfoundation.org/UA-Profile/Transport/pubsub-udp-uadp");
+        UA_STRING("http://opcfoundation.org/UA-Profile/Transport/pubsub-eth-uadp");
     connConfig.enabled = true;
 
     UA_NetworkAddressUrlDataType addr;
-    addr.networkInterface = UA_STRING("enp0s31f6");
-    addr.url = UA_STRING("opc.udp://224.0.0.22:4840/");
+    addr.networkInterface = UA_STRING("enp43s0");
+    addr.url = UA_STRING("opc.eth://03-00-00-00-00-03:10.6");
 
     UA_Variant_setScalar(&connConfig.address, &addr,
                          &UA_TYPES[UA_TYPES_NETWORKADDRESSURLDATATYPE]);
@@ -418,7 +503,10 @@ static void setupSubscriber(UA_Server *server) {
 
     /* Filtro: accetta solo messaggi dal PublisherId 1 (edge-up-3) */
     UA_UInt16 pubId = 2234;
-    UA_Variant_setScalar(&dsrConfig.publisherId, &pubId, &UA_TYPES[UA_TYPES_UINT16]);
+    //UA_Variant_setScalar(&dsrConfig.publisherId, &pubId, &UA_TYPES[UA_TYPES_UINT16]);
+    dsrConfig.publisherId.idType = UA_PUBLISHERIDTYPE_UINT16;
+    dsrConfig.publisherId.id.uint16 = pubId;
+
     dsrConfig.writerGroupId   = 100;
     dsrConfig.dataSetWriterId = 62541;  // non 1
     /* DataSetMetaData: descrive il contenuto atteso del DataSet */
@@ -460,18 +548,21 @@ static void setupSubscriber(UA_Server *server) {
     printf("[SERVER]   + DataSetReader (filter: pubId=1, wgId=100, dswId=1)\n");
 
     /* ─── 4. TargetVariables: mappa il campo ricevuto alla variabile locale ── */
-    UA_FieldTargetVariable targetVar;
-    memset(&targetVar, 0, sizeof(UA_FieldTargetVariable));
-    targetVar.targetVariable.attributeId = UA_ATTRIBUTEID_VALUE;
-    targetVar.targetVariable.targetNodeId =   UA_NODEID_NUMERIC(NS_LOCAL, 50001);/* il tuo NodeId target */;
-    rc=UA_Server_DataSetReader_createTargetVariables(server, dsrId, 1, &targetVar);
+    UA_FieldTargetDataType targetVar;
+    memset(&targetVar, 0, sizeof(UA_FieldTargetDataType));
+    targetVar.attributeId = UA_ATTRIBUTEID_VALUE;
+    targetVar.targetNodeId =   UA_NODEID_NUMERIC(NS_LOCAL, 50001);/* il tuo NodeId target */;
+    //rc=UA_Server_DataSetReader_createTargetVariables(server, dsrId, 1, &targetVar);
+    rc=UA_Server_setDataSetReaderTargetVariables(server, dsrId, 1, &targetVar);
     if(rc != UA_STATUSCODE_GOOD) {
         printf("[SERVER]   TargetVariables FAILED: %s\n", UA_StatusCode_name(rc));
     } else {
         printf("[SERVER]   + TargetVariable → ns=%d;i=50001 (ReceivedTemperature)\n",
                NS_LOCAL);
     }
-    UA_Server_freezeReaderGroupConfiguration(server, rgId);
+
+    UA_Server_enableDataSetReader(server, dsrId);
+    UA_Server_enablePubSubConnection(server, connId);
     UA_Server_setReaderGroupOperational(server, rgId);
 }
 
@@ -516,7 +607,7 @@ static UA_StatusCode startSubscriberCallback(
  *                   +-- RemoteSystem_1/ (RELY-10TSN12)
  * ═══════════════════════════════════════════════════════════ */
 
-static void buildUAFXAddressSpace(UA_Server *server) {
+static void buildUAFXAddressSpace(UA_Server *server, UA_Boolean logging) {
     printf("[SERVER] Building UAFX AddressSpace...\n");
 
     UA_UInt16 nsFxAc = resolveNamespaceIndex(server, FXAC_NS_URI);
@@ -591,7 +682,7 @@ static void buildUAFXAddressSpace(UA_Server *server) {
     printf("[SERVER]     + OutputData/Density\n");
 
     UA_NodeId inputFolder = addFolder(server, feNode, NS_LOCAL, "InputData");
-    addInputVariable(server, inputFolder, NS_LOCAL, "Temperature");
+    addInputVariable(server, inputFolder, NS_LOCAL, "Temperature", logging);
     printf("[SERVER]     + InputData/Temperature\n");
 
     addFolder(server, feNode, NS_LOCAL, "ConnectionEndpoints");
@@ -611,7 +702,7 @@ static void buildUAFXAddressSpace(UA_Server *server) {
  * MAIN
  * ═══════════════════════════════════════════════════════════ */
 
-int main(void) {
+int main(int argc, char **argv) {
     signal(SIGINT,  stopHandler);
     signal(SIGTERM, stopHandler);
     srand(time(NULL));
@@ -620,6 +711,7 @@ int main(void) {
     printf("========================================================\n");
     printf("  OPC UA FX Temperature Server (with LLDP)\n");
     printf("========================================================\n\n");
+    CliOptions opts = parseArgs(argc, argv);
 
     /* ─── Crea server ────────────────────────────────────────── */
     UA_Server *server = UA_Server_new();
@@ -679,8 +771,11 @@ int main(void) {
 
     /* ─── Carica i tipi UAFX dal nodeset generato ────────────── */
     printf("[SERVER] Loading UAFX nodesets...\n");
-    UA_StatusCode retval = my_uafx_model(server);
-    if(retval != UA_STATUSCODE_GOOD) {
+    UA_StatusCode retval     = namespace_di_generated(server);
+    UA_StatusCode retval_data = namespace_uafx_data_generated(server);
+    UA_StatusCode retval_ac   = namespace_uafx_ac_generated(server);
+
+    if(retval != UA_STATUSCODE_GOOD || retval_data != UA_STATUSCODE_GOOD || retval_ac != UA_STATUSCODE_GOOD) {
         printf("[WARNING] Address Space loaded with some missing sub-nodes (Code: %s).\n",
                UA_StatusCode_name(retval));
         printf("[WARNING] This is normal for massive UAFX NodeSets. Continuing anyway...\n\n");
@@ -689,7 +784,10 @@ int main(void) {
     }
 
     /* ─── Costruisci AddressSpace ────────────────────────────── */
-    buildUAFXAddressSpace(server);
+    buildUAFXAddressSpace(server, opts.rtLog);
+
+    if (opts.autostart)
+        setupSubscriber(server);
 
     /* ─── Avvia server ───────────────────────────────────────── */
     retval = UA_Server_run_startup(server);
@@ -740,6 +838,9 @@ int main(void) {
     printf("Press Ctrl+C to stop\n\n");
 
     /* ─── Loop principale ────────────────────────────────────── */
+    if (opts.rt)
+        setupRealtime(opts.rtCore);
+
     while(running) {
         UA_Server_run_iterate(server, true);
     }

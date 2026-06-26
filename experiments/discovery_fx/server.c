@@ -13,11 +13,14 @@
  *   gcc -o temp_server temp_serv.c my_uafx_types.c open62541.c -pthread
  * ============================================================ */
 
-#include "open62541.h"
+#include <open62541/server.h>
+#include <open62541/server_config_default.h>
 #include "types_di_generated.h"
 #include "types_uafx_data_generated.h"
 #include "types_uafx_ac_generated.h"
-#include "my_uafx_model.h"
+#include "namespace_di_generated.h"
+#include "namespace_uafx_data_generated.h"
+#include "namespace_uafx_ac_generated.h"
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -376,7 +379,11 @@ int main(void) {
      * DEVE essere chiamato prima di buildUAFXAddressSpace()      *
      * perché registra i namespace e i tipi nell'address space.   */
     printf("[SERVER] Loading UAFX nodesets...\n");
-    UA_StatusCode retval = my_uafx_model(server);
+    //UA_StatusCode retval = my_uafx_model(server);
+    UA_StatusCode retval = namespace_di_generated(server);
+    if(retval == UA_STATUSCODE_GOOD) retval = namespace_uafx_data_generated(server);
+    if(retval == UA_STATUSCODE_GOOD) retval = namespace_uafx_ac_generated(server);
+
     if(retval != UA_STATUSCODE_GOOD) {
         printf("[WARNING] Address Space loaded with some missing sub-nodes (Code: %s).\n", UA_StatusCode_name(retval));
         printf("[WARNING] This is normal for massive UAFX NodeSets. Continuing anyway...\n\n");

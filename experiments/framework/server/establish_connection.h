@@ -12,7 +12,7 @@
 #ifndef ESTABLISH_CONNECTION_H
 #define ESTABLISH_CONNECTION_H
 
-#include "open62541.h"
+#include <open62541/server.h>
 
 /* URI dei namespace UAFX (per risoluzione runtime) */
 #define FXAC_NS_URI    "http://opcfoundation.org/UA/FX/AC/"

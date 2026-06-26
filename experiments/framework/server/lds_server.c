@@ -22,7 +22,8 @@
  *   ./lds_server 4840         → porta esplicita
  * ============================================================ */
 
-#include "open62541.h"
+#include <open62541/server.h>
+#include <open62541/server_config_default.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,6 +37,8 @@
 /* Timeout: un server viene rimosso dal registro se non si
  * ri-registra entro questo intervallo (ms). */
 #define LDS_SERVER_TIMEOUT_MS  60000   /* 60 secondi */
+
+#define LDS_SERVER_IP_ADDR "192.168.17.112"
 
 static volatile UA_Boolean running = true;
 
@@ -100,16 +103,19 @@ int main(int argc, char **argv) {
     UA_ServerConfig_setMinimal(config, port, NULL);
     config->applicationDescription.discoveryUrlsSize = 1;
     config->applicationDescription.discoveryUrls = (UA_String *)UA_Array_new(1, &UA_TYPES[UA_TYPES_STRING]);
-    config->applicationDescription.discoveryUrls[0] = UA_String_fromChars("opc.tcp://192.168.17.75:4840");
-        config->applicationDescription.discoveryUrls[0] = UA_String_fromChars("opc.tcp://192.168.100.3:4840");
+    char discoveryUrlBuf[64];
+    snprintf(discoveryUrlBuf, sizeof(discoveryUrlBuf), "opc.tcp://%s:4840", LDS_SERVER_IP_ADDR);
+    config->applicationDescription.discoveryUrls[0] = UA_String_fromChars(discoveryUrlBuf);
     config->mdnsConfig.serverCapabilitiesSize = 0;
 
     // Specifica gli IP delle interfacce su cui fare mDNS
+    /*
     UA_UInt32 mdnsIPs[2];
-    mdnsIPs[0] = inet_addr("192.168.17.75");
+    mdnsIPs[0] = inet_addr("192.168.17.92");
     mdnsIPs[1] = inet_addr("192.168.100.3");
     config->mdnsIpAddressList = mdnsIPs;
-    config->mdnsIpAddressListSize = 2;
+    config->mdnsIpAddressListSize = 2;*/
+    config->mdnsInterfaceIP = UA_String_fromChars(LDS_SERVER_IP_ADDR);
     /* ─── Identità applicazione ──────────────────────────────── */
     UA_String_clear(&config->applicationDescription.applicationUri);
     config->applicationDescription.applicationUri =
