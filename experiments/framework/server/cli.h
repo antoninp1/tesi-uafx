@@ -21,6 +21,7 @@ typedef struct {
     int rtCore;
     int schedPrio;
     long cycleTime;
+    char* publishUrl;
     UA_Boolean autostart;
 
 } CliOptions;

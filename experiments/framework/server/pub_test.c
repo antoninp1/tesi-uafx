@@ -461,7 +461,8 @@ static UA_StatusCode startPublisherCallback(
         void *methodContext, const UA_NodeId *objectId,
         void *objectContext, size_t inputSize,
         const UA_Variant *input, size_t outputSize,
-        UA_Variant *output, long publishingInterval) {
+        UA_Variant *output) {
+    long publishingInterval = (long)(intptr_t)methodContext;
 
     addPubSubConnection(server, &transportProfile, &networkAddressUrl);
     addPublishedDataSet(server);
@@ -501,7 +502,7 @@ static UA_StatusCode startPublisherCallback(
  *                   +-- RemoteSystem_1/ (RELY-10TSN12)
  * ═══════════════════════════════════════════════════════════ */
 
-static void buildUAFXAddressSpace(UA_Server *server) {
+static void buildUAFXAddressSpace(UA_Server *server, long publishingInterval) {
     UA_UInt16 nsFxAc = resolveNamespaceIndex(server, FXAC_NS_URI);
 
     UA_NodeId objectsFolder = UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER);
@@ -525,7 +526,7 @@ static void buildUAFXAddressSpace(UA_Server *server) {
     UA_Server_addMethodNode(server, UA_NODEID_NULL, acNode,
         UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
         qn(NS_LOCAL, "StartPublisher"), methAttr,
-        startPublisherCallback, 0, NULL, 0, NULL, NULL, NULL);
+        startPublisherCallback, 0, NULL, 0, NULL, (void*)(intptr_t)publishingInterval, NULL);
     registerEstablishConnectionsMethod(server, acNode);
 
     /* ── Trova Assets/ già creata dal tipo e popolala ── */
@@ -671,24 +672,19 @@ int main(int argc, char **argv) {
     }
 
     /* ─── Costruisci AddressSpace ────────────────────────────── */
-    buildUAFXAddressSpace(server);
+    buildUAFXAddressSpace(server, opts.cycleTime);
 
-
-
-    /* Run the server */
-#if AUTOSTART_PUBSUB
-    addPubSubConnection(server, &transportProfile, &networkAddressUrl);
-    addPublishedDataSet(server);
-    addDataSetField(server);
-    addWriterGroup(server);
-    addDataSetWriter(server);
-    UA_Server_enableDataSetWriter(server, dataSetWriterIdent);
-    //UA_Server_setWriterGroupOperational(server, writerGroupIdent);
-    UA_Server_enableWriterGroup(server, writerGroupIdent);
-    UA_Server_enablePubSubConnection(server, connectionIdent);
-    //addConnectionEndpoint(server);
-    printf("[SERVER] Publisher started automatically\n");
-#endif
+    if (opts.autostart) {
+        addPubSubConnection(server, &transportProfile, &networkAddressUrl);
+        addPublishedDataSet(server);
+        addDataSetField(server);
+        addWriterGroup(server, opts.cycleTime);
+        addDataSetWriter(server);
+        UA_Server_enableDataSetWriter(server, dataSetWriterIdent);
+        UA_Server_enableWriterGroup(server, writerGroupIdent);
+        UA_Server_enablePubSubConnection(server, connectionIdent);
+        printf("[SERVER] Publisher started automatically\n");
+    }
 
     /* ─── Avvia server ───────────────────────────────────────── */
     retval = UA_Server_run_startup(server);
@@ -740,7 +736,7 @@ int main(int argc, char **argv) {
         setupCpuAffinity(opts.rtCore);
     
     if (opts.schedPrio)
-        setupRealtimePriority(opts.schedPrio);
+        setupSchedulePriority(opts.schedPrio);
 
     if (opts.rt) {
         struct timespec next;
