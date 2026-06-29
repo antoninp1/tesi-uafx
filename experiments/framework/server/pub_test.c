@@ -25,7 +25,6 @@
 #include "namespace_di_generated.h"
 #include "namespace_uafx_data_generated.h"
 #include "namespace_uafx_ac_generated.h"
-#include "establish_connection.h"
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,6 +33,9 @@
 #include <errno.h>
 #include <time.h>
 #include <getopt.h>
+#include "establish_connection.h"
+#include "rt_functions.h"
+#include "cli.h"
 
 /* ─── Namespace index di FX/AC nel server ─────────────────── */
 #define FXAC_NS_URI   "http://opcfoundation.org/UA/FX/AC/"
@@ -50,11 +52,6 @@
 #define PUBLISH_INTERFACE "enp43s0"
 #define PUBLISH_URL "opc.eth://03-00-00-00-00-03:10.6"
 
-#define PUBLISHING_INTERVAL 1
-#define AUTOSTART_PUBSUB 1
-
-#define CYCLE_TIME_NS ((long)(PUBLISHING_INTERVAL) * 1000000L)  /* PUBLISHING_INTERVAL is in ms */
-
 #define SCHED_PRIORITY 80
 
 static UA_NodeId connectionIdent, publishedDataSetIdent, writerGroupIdent,
@@ -68,50 +65,6 @@ static void stopHandler(int sig) {
     running = false;
 }
 
-typedef struct {
-    UA_Boolean rt;
-    UA_Boolean rtLog;
-    int rtCore;
-} CliOptions;
-
-static CliOptions parseArgs(int argc, char **argv) {
-    CliOptions opts = { .rt = false, .rtLog = false, .rtCore = 2};
-    static struct option longOpts[] = {
-        {"rt",      no_argument,       0, 'r'},
-        {"rt-core", required_argument, 0, 'c'},
-        {"help",    no_argument,       0, 'h'},
-        {0, 0, 0, 0}
-    };
-    int opt;
-    while((opt = getopt_long(argc, argv, "rc:h", longOpts, NULL)) != -1) {
-        switch(opt) {
-            case 'r': opts.rt = true; break;
-            case 'c': opts.rtCore = atoi(optarg); break;
-            case 'h':
-                printf("Usage: %s [--rt] [--rt-core=N]\n", argv[0]);
-                exit(0);
-            default:
-                fprintf(stderr, "Unknown option. Please use --help.\n");
-                exit(1);
-        }
-    }
-    return opts;
-}
-
-static void setupRealtime(int rtCore) {
-    if(mlockall(MCL_CURRENT | MCL_FUTURE) != 0)
-        perror("[RT] mlockall failed (ran as root ?)");
-
-    struct sched_param sp = { .sched_priority = SCHED_PRIORITY };
-    if(sched_setscheduler(0, SCHED_FIFO, &sp) != 0)
-        perror("[RT] sched_setscheduler failed (ran as root ?)");
-
-    cpu_set_t cpuset;
-    CPU_ZERO(&cpuset);
-    CPU_SET(rtCore, &cpuset);
-    if(sched_setaffinity(0, sizeof(cpuset), &cpuset) != 0)
-        perror("[RT] sched_setaffinity failed");
-}
 
 /* ═══════════════════════════════════════════════════════════
  * Risolve il namespace index per una URI data
@@ -464,11 +417,11 @@ static void addDataSetField(UA_Server *server) {
                               &dataSetFieldConfig, &dataSetFieldIdent);
 }
 
-static void addWriterGroup(UA_Server *server) {
+static void addWriterGroup(UA_Server *server, long publishingInterval) {
     UA_WriterGroupConfig writerGroupConfig;
     memset(&writerGroupConfig, 0, sizeof(UA_WriterGroupConfig));
     writerGroupConfig.name = UA_STRING("Demo WriterGroup");
-    writerGroupConfig.publishingInterval = PUBLISHING_INTERVAL;
+    writerGroupConfig.publishingInterval = publishingInterval;
     writerGroupConfig.writerGroupId = 100;
     writerGroupConfig.enabled = false;
     writerGroupConfig.encodingMimeType = UA_PUBSUB_ENCODING_UADP;
@@ -508,12 +461,12 @@ static UA_StatusCode startPublisherCallback(
         void *methodContext, const UA_NodeId *objectId,
         void *objectContext, size_t inputSize,
         const UA_Variant *input, size_t outputSize,
-        UA_Variant *output) {
+        UA_Variant *output, long publishingInterval) {
 
     addPubSubConnection(server, &transportProfile, &networkAddressUrl);
     addPublishedDataSet(server);
     addDataSetField(server);
-    addWriterGroup(server);
+    addWriterGroup(server, publishingInterval);
     addDataSetWriter(server);
     UA_Server_enableDataSetWriter(server, dataSetWriterIdent);
     //UA_Server_setWriterGroupOperational(server, writerGroupIdent);
@@ -783,15 +736,17 @@ int main(int argc, char **argv) {
     printf("Press Ctrl+C to stop\n\n");
 
     /* ─── Loop principale ────────────────────────────────────── */
-    if (opts.rt) {
-        setupRealtime(opts.rtCore);
+    if (opts.rtCore)
+        setupCpuAffinity(opts.rtCore);
+    
+    if (opts.schedPrio)
+        setupRealtimePriority(opts.schedPrio);
 
+    if (opts.rt) {
         struct timespec next;
         clock_gettime(CLOCK_MONOTONIC, &next);
         while(running) {
-            /* avance d'un cycle complet, jamais d'un delta depuis "maintenant" :
-            * ça évite toute dérive cumulative au fil des itérations */
-            next.tv_nsec += CYCLE_TIME_NS;
+            next.tv_nsec += opts.cycleTime;
             while(next.tv_nsec >= 1000000000L) {
                 next.tv_nsec -= 1000000000L;
                 next.tv_sec++;

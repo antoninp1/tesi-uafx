@@ -20,6 +20,7 @@ typedef struct {
     UA_Boolean rtLog;
     int rtCore;
     int schedPrio;
+    long cycleTime;
     UA_Boolean autostart;
 
 } CliOptions;
