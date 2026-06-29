@@ -33,6 +33,8 @@
 #include <sys/mman.h>
 #include <errno.h>
 #include "establish_connection.h"
+#include "rt_functions.h"
+#include "cli.h"
 /* ─── Namespace index di FX/AC nel server ─────────────────── */
 #define FXAC_NS_URI   "http://opcfoundation.org/UA/FX/AC/"
 
@@ -56,59 +58,7 @@ static void stopHandler(int sig) {
     running = false;
 }
 
-typedef struct {
-    UA_Boolean rt;
-    UA_Boolean rtLog;
-    int rtCore;
-    int schedPrio;
-    UA_Boolean autostart;
 
-} CliOptions;
-
-static CliOptions parseArgs(int argc, char **argv) {
-    CliOptions opts = { .rt = false, .rtLog = false, .rtCore = 2};
-    static struct option longOpts[] = {
-        {"rt",      no_argument,       0, 'r'},
-        {"rt-log",      no_argument,       0, 'l'},
-        {"rt-core", required_argument, 0, 'c'},
-        {"schedule-priority", required_argument, 0, 'p'},
-        {"autostart", no_argument, 0, 'a'},
-        {"help",    no_argument,       0, 'h'},
-        {0, 0, 0, 0}
-    };
-    int opt;
-    while((opt = getopt_long(argc, argv, "rc:h", longOpts, NULL)) != -1) {
-        switch(opt) {
-            case 'r': opts.rt = true; break;
-            case 'l': opts.rtLog = true; break;
-            case 'c': opts.rtCore = atoi(optarg); break;
-            case 'p': opts.schedPrio = atoi(optarg); break;
-            case 'a': opts.autostart = true; break;
-            case 'h':
-                printf("Usage: %s [--rt] [--rt-log] [--rt-core=N] [--schedule-priority=N] [--autostart]\n", argv[0]);
-                exit(0);
-            default:
-                fprintf(stderr, "Unknown option. Please use --help.\n");
-                exit(1);
-        }
-    }
-    return opts;
-}
-
-static void setupRealtime(int rtCore) {
-    if(mlockall(MCL_CURRENT | MCL_FUTURE) != 0)
-        perror("[RT] mlockall a échoué (lancé en root ?)");
-
-    struct sched_param sp = { .sched_priority = 80 };
-    if(sched_setscheduler(0, SCHED_FIFO, &sp) != 0)
-        perror("[RT] sched_setscheduler a échoué (lancé en root ?)");
-
-    cpu_set_t cpuset;
-    CPU_ZERO(&cpuset);
-    CPU_SET(rtCore, &cpuset);   /* ajuste selon ta machine */
-    if(sched_setaffinity(0, sizeof(cpuset), &cpuset) != 0)
-        perror("[RT] sched_setaffinity a échoué");
-}
 
 /* ═══════════════════════════════════════════════════════════
  * Risolve il namespace index per una URI data
@@ -838,8 +788,11 @@ int main(int argc, char **argv) {
     printf("Press Ctrl+C to stop\n\n");
 
     /* ─── Loop principale ────────────────────────────────────── */
-    if (opts.rt)
-        setupRealtime(opts.rtCore);
+    if (opts.schedPrio)
+        setupSchedulePriority(opts.schedPrio);
+    
+    if (opts.rtCore)
+        setupCpuAffinity(opts.rtCore);
 
     while(running) {
         UA_Server_run_iterate(server, true);
