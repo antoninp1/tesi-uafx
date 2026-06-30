@@ -1,3 +1,4 @@
+
 /* ============================================================
  * uafx_temperature_server.c
  *
@@ -18,6 +19,7 @@
 #include <open62541/server_config_default.h>
 #include <open62541/server_pubsub.h>
 #include <open62541/client_config_default.h>
+#include <open62541/plugin/securitypolicy_default.h>
 #include "types_di_generated.h"
 #include "types_uafx_data_generated.h"
 #include "types_uafx_ac_generated.h"
@@ -27,16 +29,26 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <time.h>
-#include <getopt.h>
 #include <sched.h>
 #include <sys/mman.h>
 #include <errno.h>
+#include <time.h>
+#include <getopt.h>
 #include "establish_connection.h"
 #include "rt_functions.h"
 #include "cli.h"
+
+
 /* ─── Namespace index di FX/AC nel server ─────────────────── */
 #define FXAC_NS_URI   "http://opcfoundation.org/UA/FX/AC/"
+
+#define SKS_SERVER_URL          "opc.tcp://192.168.17.112:4850"
+#define DEMO_SECURITYGROUPNAME  "UafxSecurityGroup"
+#define SKS_USERNAME            "uafx-sks-client"
+#define SKS_PASSWORD            "ChangeThisPasswordInLab"
+
+#define PUB_CERT_FILE "scripts/certs/publisher.cert.der"
+#define PUB_KEY_FILE  "scripts/certs/publisher.key.der"
 
 /* NodeId dei tipi UAFX (numeric id fisso da nodeset XML) */
 #define FXAC_ID_AUTOMATIONCOMPONENTTYPE  2
@@ -45,15 +57,79 @@
 
 #define NS_LOCAL 1
 #define LDS_URL          "opc.tcp://192.168.17.112:4840"
-#define SERVER_PUBLIC_URL "opc.tcp://192.168.17.184:4841"
+#define SERVER_PUBLIC_URL "opc.tcp://192.168.17.92:4841"
 
+static UA_NodeId connectionIdent, publishedDataSetIdent, writerGroupIdent,
+    dataSetWriterIdent;
+static UA_String transportProfile;
+static UA_NetworkAddressUrlDataType networkAddressUrl;
 static volatile UA_Boolean running = true;
+static UA_NodeId temperatureNodeId = {0};
+static UA_ClientConfig *sksClientConfigGlobal = NULL;
 
 static void stopHandler(int sig) {
     printf("\n[SERVER] Shutdown signal received\n");
     running = false;
 }
 
+static UA_ByteString
+loadFile(const char *const path) {
+    UA_ByteString fileContents = UA_STRING_NULL;
+    FILE *fp = fopen(path, "rb");
+    if(!fp) {
+        printf("[SERVER] ERROR: cannot open %s\n", path);
+        return fileContents;
+    }
+    fseek(fp, 0, SEEK_END);
+    long length = ftell(fp);
+    if(length < 0) { fclose(fp); return fileContents; }
+    fileContents.length = (size_t)length;
+    fileContents.data = (UA_Byte *)UA_malloc(fileContents.length);
+    if(fileContents.data) {
+        fseek(fp, 0, SEEK_SET);
+        size_t read = fread(fileContents.data, 1, fileContents.length, fp);
+        if(read != fileContents.length)
+            UA_ByteString_clear(&fileContents);
+    } else {
+        fileContents.length = 0;
+    }
+    fclose(fp);
+    return fileContents;
+}
+
+static UA_ClientConfig *
+encryptedSksClient(const char *username, const char *password, const char *applicationUri,
+                   UA_ByteString certificate, UA_ByteString privateKey) {
+    UA_ClientConfig *cc = (UA_ClientConfig *)UA_calloc(1, sizeof(UA_ClientConfig));
+    cc->securityMode = UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
+    UA_ClientConfig_setDefaultEncryption(cc, certificate, privateKey, NULL, 0, NULL, 0);
+    cc->securityPolicyUri = UA_STRING_ALLOC("http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256");
+    UA_String_clear(&cc->clientDescription.applicationUri);
+    cc->clientDescription.applicationUri = UA_String_fromChars(applicationUri);
+ 
+    UA_UserNameIdentityToken *identityToken = UA_UserNameIdentityToken_new();
+    identityToken->userName = UA_STRING_ALLOC(username);
+    identityToken->password = UA_STRING_ALLOC(password);
+    UA_ExtensionObject_clear(&cc->userIdentityToken);
+    cc->userIdentityToken.encoding = UA_EXTENSIONOBJECT_DECODED;
+    cc->userIdentityToken.content.decoded.type = &UA_TYPES[UA_TYPES_USERNAMEIDENTITYTOKEN];
+    cc->userIdentityToken.content.decoded.data = identityToken;
+    return cc;
+}
+ 
+static void
+sksPullRequestCallback(UA_Server *server, UA_StatusCode sksPullRequestStatus,
+                       void *context) {
+    UA_PubSubState state = UA_PUBSUBSTATE_OPERATIONAL;
+    UA_Server_getWriterGroupState(server, writerGroupIdent, &state);
+    if(sksPullRequestStatus == UA_STATUSCODE_GOOD) { // && state == UA_PUBSUBSTATE_PREOPERATIONAL) {
+        UA_Server_setWriterGroupActivateKey(server, writerGroupIdent);
+        printf("[SERVER] SKS: encryption key activated for WriterGroup\n");
+    } else if(sksPullRequestStatus != UA_STATUSCODE_GOOD) {
+        printf("[SERVER] SKS: pull request FAILED: %s\n",
+               UA_StatusCode_name(sksPullRequestStatus));
+    }
+}
 
 
 /* ═══════════════════════════════════════════════════════════
@@ -96,34 +172,6 @@ static UA_QualifiedName qn(UA_UInt16 ns, const char *name) {
 static UA_LocalizedText lt(const char *text) {
     return UA_LOCALIZEDTEXT("en-US", (char *)text);
 }
-
-
-static UA_NodeId resolveChildByNameServer(UA_Server *server,
-                                           UA_NodeId parentId,
-                                           const char *name) {
-    UA_BrowseDescription bd;
-    UA_BrowseDescription_init(&bd);
-    bd.nodeId = parentId;
-    bd.browseDirection = UA_BROWSEDIRECTION_FORWARD;
-    bd.referenceTypeId = UA_NODEID_NUMERIC(0, UA_NS0ID_HIERARCHICALREFERENCES);
-    bd.includeSubtypes = true;
-    bd.resultMask = UA_BROWSERESULTMASK_BROWSENAME;
-
-    UA_BrowseResult br = UA_Server_browse(server, 0, &bd);
-    UA_NodeId result = UA_NODEID_NULL;
-
-    for(size_t i = 0; i < br.referencesSize; i++) {
-        UA_ReferenceDescription *ref = &br.references[i];
-        if(ref->browseName.name.length == strlen(name) &&
-           memcmp(ref->browseName.name.data, name, strlen(name)) == 0) {
-            UA_NodeId_copy(&ref->nodeId.nodeId, &result);
-            break;
-        }
-    }
-    UA_BrowseResult_clear(&br);
-    return result;
-}
-
 
 static UA_NodeId addFolder(UA_Server *server, UA_NodeId parent,
                             UA_UInt16 ns, const char *name) {
@@ -204,28 +252,53 @@ static UA_NodeId addUInt32Variable(UA_Server *server, UA_NodeId parent,
     return newNode;
 }
 
+static UA_NodeId resolveChildByNameServer(UA_Server *server,
+                                           UA_NodeId parentId,
+                                           const char *name) {
+    UA_BrowseDescription bd;
+    UA_BrowseDescription_init(&bd);
+    bd.nodeId = parentId;
+    bd.browseDirection = UA_BROWSEDIRECTION_FORWARD;
+    bd.referenceTypeId = UA_NODEID_NUMERIC(0, UA_NS0ID_HIERARCHICALREFERENCES);
+    bd.includeSubtypes = true;
+    bd.resultMask = UA_BROWSERESULTMASK_BROWSENAME;
+
+    UA_BrowseResult br = UA_Server_browse(server, 0, &bd);
+    UA_NodeId result = UA_NODEID_NULL;
+
+    for(size_t i = 0; i < br.referencesSize; i++) {
+        UA_ReferenceDescription *ref = &br.references[i];
+        if(ref->browseName.name.length == strlen(name) &&
+           memcmp(ref->browseName.name.data, name, strlen(name)) == 0) {
+            UA_NodeId_copy(&ref->nodeId.nodeId, &result);
+            break;
+        }
+    }
+    UA_BrowseResult_clear(&br);
+    return result;
+}
+
 /* ═══════════════════════════════════════════════════════════
- * Density Variable with Dynamic Callback
+ * Temperature Variable with Dynamic Callback
  * ═══════════════════════════════════════════════════════════ */
 
-/* Density dinamica: 998.0 ± 5.0 kg/m^3 (tipico per acqua) */
-static void readDensity(UA_Server *server, const UA_NodeId *sessionId,
-                        void *sessionContext, const UA_NodeId *nodeId,
-                        void *nodeContext, const UA_NumericRange *range,
-                        const UA_DataValue *data) {
-    UA_Float density = 998.0f + ((rand() % 1000) - 500) / 100.0f;
+static void readTemperature(UA_Server *server, const UA_NodeId *sessionId,
+                            void *sessionContext, const UA_NodeId *nodeId,
+                            void *nodeContext, const UA_NumericRange *range,
+                            const UA_DataValue *data) {
+    UA_Float temperature = 20.0f + ((rand() % 1000) - 500) / 100.0f;
     UA_Variant value;
-    UA_Variant_setScalar(&value, &density, &UA_TYPES[UA_TYPES_FLOAT]);
+    UA_Variant_setScalar(&value, &temperature, &UA_TYPES[UA_TYPES_FLOAT]);
     UA_Server_writeValue(server, *nodeId, value);
 }
 
-static UA_NodeId addDensityVariable(UA_Server *server, UA_NodeId parent,
-                                    UA_UInt16 ns, const char *name) {
+static UA_NodeId addTemperatureVariable(UA_Server *server, UA_NodeId parent,
+                                        UA_UInt16 ns, const char *name) {
     UA_VariableAttributes attr = UA_VariableAttributes_default;
     attr.displayName = lt(name);
-    attr.description = lt("Current density reading in kg/m^3");
+    attr.description = lt("Current temperature reading in degrees Celsius");
 
-    UA_Float initialValue = 998.0f;
+    UA_Float initialValue = 20.0f;
     UA_Variant_setScalar(&attr.value, &initialValue, &UA_TYPES[UA_TYPES_FLOAT]);
     attr.dataType = UA_TYPES[UA_TYPES_FLOAT].typeId;
     attr.accessLevel = UA_ACCESSLEVELMASK_READ;
@@ -236,48 +309,13 @@ static UA_NodeId addDensityVariable(UA_Server *server, UA_NodeId parent,
         UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), attr, NULL, &newNode);
 
     UA_ValueCallback callback;
-    callback.onRead  = readDensity;
+    callback.onRead  = readTemperature;
     callback.onWrite = NULL;
     UA_Server_setVariableNode_valueCallback(server, newNode, callback);
 
-    addStringVariable(server, newNode, ns, "EngineeringUnits", "kg/m^3");
+    addStringVariable(server, newNode, ns, "EngineeringUnits", "\xC2\xB0""C");
+
     return newNode;
-}
-
-static void logReceivedUpdate(UA_Server *server, const UA_NodeId *sessionId,
-                               void *sessionContext, const UA_NodeId *nodeId,
-                               void *nodeContext, const UA_NumericRange *range,
-                               const UA_DataValue *data) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    printf("[RX] %ld.%09ld\n", (long)ts.tv_sec, (long)ts.tv_nsec);
-}
-
-static UA_NodeId addInputVariable(UA_Server *server, UA_NodeId parent, UA_UInt16 ns, const char *name, UA_Boolean logging){
-    UA_VariableAttributes inputAttr = UA_VariableAttributes_default;
-     inputAttr.displayName = lt(name);
-    inputAttr.description = lt("Temperature recived in C");
-    UA_Float initTemp = 0.0f;
-    UA_Variant_setScalar(&inputAttr.value, &initTemp, &UA_TYPES[UA_TYPES_FLOAT]);
-    inputAttr.dataType = UA_TYPES[UA_TYPES_FLOAT].typeId;
-    inputAttr.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
-    UA_NodeId receivedTempNodeId = UA_NODEID_NULL;
-    UA_Server_addVariableNode(server, UA_NODEID_NUMERIC(NS_LOCAL, 50001),
-        parent,
-        UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
-        qn(ns, "Temperature"),
-        UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE),
-        inputAttr, NULL, &receivedTempNodeId);
-
-    if (logging) {
-        UA_ValueCallback rxCallback;
-        rxCallback.onRead = NULL;
-        rxCallback.onWrite = logReceivedUpdate;
-        UA_Server_setVariableNode_valueCallback(server, receivedTempNodeId, rxCallback);
-    }
-
-    addStringVariable(server, receivedTempNodeId, NS_LOCAL, "EngineeringUnits", "\xC2\xB0""C");
-return receivedTempNodeId;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -308,63 +346,63 @@ static void addLocalSystemData(UA_Server *server, UA_NodeId parent,
                                const char *portId, UA_UInt32 portIdSubtype) {
     UA_NodeId local = addBaseObject(server, parent, NS_LOCAL,
                                     "LocalSystemData",
-                                    "LLDP Local System (edge-up-4)");
-    addStringVariable(server, local, NS_LOCAL, "ChassisId",          "00:07:32:ae:79:1d");
+                                    "LLDP Local System (edge-up-3)");
+    addStringVariable(server, local, NS_LOCAL, "ChassisId",          "00:07:32:ae:79:13");
     addUInt32Variable(server, local, NS_LOCAL, "ChassisIdSubtype",   4);
-    addStringVariable(server, local, NS_LOCAL, "SysName",            "edge-up-4");
+    addStringVariable(server, local, NS_LOCAL, "SysName",            "edge-up-3");
     addStringVariable(server, local, NS_LOCAL, "SysDescr",
                       "Ubuntu 24.04.4 LTS Linux 6.8.1-1015-realtime x86_64");
-    addStringVariable(server, local, NS_LOCAL, "MgmtAddress",        "192.168.100.4");
+    addStringVariable(server, local, NS_LOCAL, "MgmtAddress",        "192.168.100.3");
     addStringVariable(server, local, NS_LOCAL, "SystemCapabilities", "Bridge,Router,Wlan");
     addStringVariable(server, local, NS_LOCAL, "PortId",             portId);
     addUInt32Variable(server, local, NS_LOCAL, "PortIdSubtype",      portIdSubtype);
 }
 
 static void buildNetworkInterfaces(UA_Server *server) {
-    printf("[SERVER] Building NetworkInterfaces (edge-up-4)...\n");
+    printf("[SERVER] Building NetworkInterfaces (edge-up-3)...\n");
 
     UA_NodeId objects = UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER);
     UA_NodeId niFolder = addFolder(server, objects, NS_LOCAL, "NetworkInterfaces");
 
-    /* ============ enp43s0 → vicino edge-up-3 ============ */
+    /* ============ enp43s0 → vicino edge-up-4 ============ */
     {
         UA_NodeId iface = addBaseObject(server, niFolder, NS_LOCAL,
-                                        "enp43s0", "Physical interface enp43s0");
+                                        "enp43s0", "Physical interface enp43s0.10");
         addStringVariable(server, iface, NS_LOCAL, "AdminStatus", "up");
         addStringVariable(server, iface, NS_LOCAL, "OperStatus",  "up");
-        addStringVariable(server, iface, NS_LOCAL, "PhysAddress", "00:07:32:ae:79:1d");
+        addStringVariable(server, iface, NS_LOCAL, "PhysAddress", "00:07:32:ae:79:13");
         addUInt32Variable(server, iface, NS_LOCAL, "Speed", 1000);
 
         UA_NodeId lldp = addFolder(server, iface, NS_LOCAL, "LldpData");
-        addLocalSystemData(server, lldp, "00:07:32:ae:79:1d", 3);
+        addLocalSystemData(server, lldp, "00:07:32:ae:79:13", 3);
 
         UA_NodeId rsFolder = addFolder(server, lldp, NS_LOCAL, "RemoteSystemsData");
         UA_NodeId rs = addBaseObject(server, rsFolder, NS_LOCAL,
                                      "RemoteSystem_1", "LLDP neighbor on enp43s0");
-        addStringVariable(server, rs, NS_LOCAL, "ChassisId",          "00:07:32:ae:79:13");
+        addStringVariable(server, rs, NS_LOCAL, "ChassisId",          "00:07:32:ae:79:1d");
         addUInt32Variable(server, rs, NS_LOCAL, "ChassisIdSubtype",   4);
-        addStringVariable(server, rs, NS_LOCAL, "SysName",            "edge-up-3");
+        addStringVariable(server, rs, NS_LOCAL, "SysName",            "edge-up-4");
         addStringVariable(server, rs, NS_LOCAL, "SysDescr",
                           "Ubuntu 24.04.4 LTS Linux 6.8.1-1015-realtime x86_64");
-        addStringVariable(server, rs, NS_LOCAL, "MgmtAddress",        "192.168.100.3");
-        addStringVariable(server, rs, NS_LOCAL, "PortId",             "00:07:32:ae:79:13");
+        addStringVariable(server, rs, NS_LOCAL, "MgmtAddress",        "192.168.100.4");
+        addStringVariable(server, rs, NS_LOCAL, "PortId",             "00:07:32:ae:79:1d");
         addUInt32Variable(server, rs, NS_LOCAL, "PortIdSubtype",      3);
         addStringVariable(server, rs, NS_LOCAL, "PortDescr",          "enp43s0");
         addStringVariable(server, rs, NS_LOCAL, "SystemCapabilities", "Bridge,Router,Wlan");
         addUInt32Variable(server, rs, NS_LOCAL, "TimeToLive",         120);
     }
 
-    /* ============ enp0s31f6 → vicino RELY-10TSN12 ============ */
+    /* ============ enp0s31f6 → vicino RELY-10TSN12 PORT_4 ============ */
     {
         UA_NodeId iface = addBaseObject(server, niFolder, NS_LOCAL,
                                         "enp0s31f6", "Physical interface enp0s31f6");
         addStringVariable(server, iface, NS_LOCAL, "AdminStatus", "up");
         addStringVariable(server, iface, NS_LOCAL, "OperStatus",  "up");
-        addStringVariable(server, iface, NS_LOCAL, "PhysAddress", "00:07:32:ae:79:1c");
+        addStringVariable(server, iface, NS_LOCAL, "PhysAddress", "00:07:32:ae:79:12");
         addUInt32Variable(server, iface, NS_LOCAL, "Speed", 1000);
 
         UA_NodeId lldp = addFolder(server, iface, NS_LOCAL, "LldpData");
-        addLocalSystemData(server, lldp, "00:07:32:ae:79:1c", 3);
+        addLocalSystemData(server, lldp, "00:07:32:ae:79:12", 3);
 
         UA_NodeId rsFolder = addFolder(server, lldp, NS_LOCAL, "RemoteSystemsData");
         UA_NodeId rs = addBaseObject(server, rsFolder, NS_LOCAL,
@@ -376,7 +414,7 @@ static void buildNetworkInterfaces(UA_Server *server) {
         addStringVariable(server, rs, NS_LOCAL, "MgmtAddress",        "10.0.100.1");
         addStringVariable(server, rs, NS_LOCAL, "PortId",             "70:f8:e7:d0:54:56");
         addUInt32Variable(server, rs, NS_LOCAL, "PortIdSubtype",      3);
-        addStringVariable(server, rs, NS_LOCAL, "PortDescr",          "PORT_3");
+        addStringVariable(server, rs, NS_LOCAL, "PortDescr",          "PORT_4");
         addStringVariable(server, rs, NS_LOCAL, "SystemCapabilities", "Bridge");
         addUInt32Variable(server, rs, NS_LOCAL, "TimeToLive",         40);
     }
@@ -387,152 +425,141 @@ static void buildNetworkInterfaces(UA_Server *server) {
                                         "wlp44s0", "Wireless interface wlp44s0");
         addStringVariable(server, iface, NS_LOCAL, "AdminStatus", "up");
         addStringVariable(server, iface, NS_LOCAL, "OperStatus",  "up");
-        addStringVariable(server, iface, NS_LOCAL, "PhysAddress", "4c:b0:4a:9e:28:a2");
+        addStringVariable(server, iface, NS_LOCAL, "PhysAddress", "4c:b0:4a:9e:28:84");
         addUInt32Variable(server, iface, NS_LOCAL, "Speed", 0);
 
         UA_NodeId lldp = addFolder(server, iface, NS_LOCAL, "LldpData");
-        addLocalSystemData(server, lldp, "4c:b0:4a:9e:28:a2", 3);
+        addLocalSystemData(server, lldp, "4c:b0:4a:9e:28:84", 3);
         addFolder(server, lldp, NS_LOCAL, "RemoteSystemsData");
     }
 
     printf("[SERVER] + NetworkInterfaces: enp43s0, enp0s31f6, wlp44s0\n");
-    printf("[SERVER]   ChassisId (shared): 00:07:32:ae:79:1d\n\n");
+    printf("[SERVER]   ChassisId (shared): 00:07:32:ae:79:13\n\n");
 }
 
-static void setupSubscriber(UA_Server *server) {
-    printf("[SERVER] Setting up PubSub Subscriber...\n");
 
-    /* ─── 1. PubSubConnection (stessa multicast del publisher) ── */
-    UA_PubSubConnectionConfig connConfig;
-    memset(&connConfig, 0, sizeof(connConfig));
-    connConfig.name = UA_STRING("UDP Multicast Subscriber Connection");
-    connConfig.transportProfileUri =
-        UA_STRING("http://opcfoundation.org/UA-Profile/Transport/pubsub-eth-uadp");
-    connConfig.enabled = true;
-
-    UA_NetworkAddressUrlDataType addr;
-    addr.networkInterface = UA_STRING("enp43s0");
-    addr.url = UA_STRING("opc.eth://03-00-00-00-00-03:10.6");
-
-    UA_Variant_setScalar(&connConfig.address, &addr,
+/* -----7. Pub Static implementation exemple  */
+	//addPubSubCOnnections
+    static void addPubSubConnection(UA_Server *server, UA_String *transportProfile,
+                    UA_NetworkAddressUrlDataType *networkAddressUrl){
+      UA_PubSubConnectionConfig connectionConfig;
+      memset(&connectionConfig, 0, sizeof(connectionConfig));
+      connectionConfig.name = UA_STRING("UDP Connection 1");
+      connectionConfig.transportProfileUri = *transportProfile;
+      UA_Variant_setScalar(&connectionConfig.address, networkAddressUrl,
                          &UA_TYPES[UA_TYPES_NETWORKADDRESSURLDATATYPE]);
+    /* Changed to static publisherId from random generation to identify
+     * the publisher on Subscriber side */
+    	connectionConfig.publisherId.idType = UA_PUBLISHERIDTYPE_UINT16;
+    	connectionConfig.publisherId.id.uint16 = 2234;
+	connectionConfig.enabled = false;
+    	UA_Server_addPubSubConnection(server, &connectionConfig, &connectionIdent);
+}
 
-    //connConfig.publisherIdType = UA_PUBLISHERIDTYPE_UINT16;
-    //connConfig.publisherId.uint16 = 2234;  /* diverso dal publisher */
+     //addPublishedDataset
+    static void addPublishedDataSet(UA_Server *server) {
+    	/* The PublishedDataSetConfig contains all necessary public
+    	* information for the creation of a new PublishedDataSet */
+    	UA_PublishedDataSetConfig publishedDataSetConfig;
+    	memset(&publishedDataSetConfig, 0, sizeof(UA_PublishedDataSetConfig));
+    	publishedDataSetConfig.publishedDataSetType = UA_PUBSUB_DATASET_PUBLISHEDITEMS;
+    	publishedDataSetConfig.name = UA_STRING("First PDS");
+    	UA_Server_addPublishedDataSet(server, &publishedDataSetConfig, &publishedDataSetIdent);
+}
 
-    UA_NodeId connId;
-    UA_StatusCode rc = UA_Server_addPubSubConnection(server, &connConfig, &connId);
-    if(rc != UA_STATUSCODE_GOOD) {
-        printf("[SERVER]   Subscriber PubSubConnection FAILED: %s\n",
-               UA_StatusCode_name(rc));
-        return;
-    }
-    printf("[SERVER]   + PubSubConnection (subscriber, opc.udp://239.0.0.1:4840)\n");
+//AddDataSetField
 
-    /* ─── 2. ReaderGroup ──────────────────────────────── */
-    UA_ReaderGroupConfig rgConfig;
-    memset(&rgConfig, 0, sizeof(rgConfig));
-    rgConfig.name = UA_STRING("TemperatureReaderGroup");
+static void addDataSetField(UA_Server *server) {
+    /* Add a field to the previous created PublishedDataSet */
+    UA_NodeId dataSetFieldIdent;
+    UA_DataSetFieldConfig dataSetFieldConfig;
+    memset(&dataSetFieldConfig, 0, sizeof(UA_DataSetFieldConfig));
+    dataSetFieldConfig.dataSetFieldType = UA_PUBSUB_DATASETFIELD_VARIABLE;
+    dataSetFieldConfig.field.variable.fieldNameAlias = UA_STRING("Temperature C");
+    dataSetFieldConfig.field.variable.promotedField = false;
+    dataSetFieldConfig.field.variable.publishParameters.publishedVariable = temperatureNodeId;
+    dataSetFieldConfig.field.variable.publishParameters.attributeId = UA_ATTRIBUTEID_VALUE;
+    UA_Server_addDataSetField(server, publishedDataSetIdent,
+                              &dataSetFieldConfig, &dataSetFieldIdent);
+}
 
-    UA_NodeId rgId;
-    rc = UA_Server_addReaderGroup(server, connId, &rgConfig, &rgId);
-    if(rc != UA_STATUSCODE_GOOD) {
-        printf("[SERVER]   ReaderGroup FAILED: %s\n", UA_StatusCode_name(rc));
-        return;
-    }
-    printf("[SERVER]   + ReaderGroup\n");
+static void addWriterGroup(UA_Server *server, long publishingInterval) {
+    UA_WriterGroupConfig writerGroupConfig;
+    memset(&writerGroupConfig, 0, sizeof(UA_WriterGroupConfig));
+    writerGroupConfig.name = UA_STRING("Demo WriterGroup");
+    writerGroupConfig.publishingInterval = (UA_Double)publishingInterval/1000000.0;
+    writerGroupConfig.writerGroupId = 100;
+    writerGroupConfig.enabled = false;
+    writerGroupConfig.encodingMimeType = UA_PUBSUB_ENCODING_UADP;
 
-    /* ─── 3. DataSetReader ────────────────────────────── */
-    UA_DataSetReaderConfig dsrConfig;
-    memset(&dsrConfig, 0, sizeof(dsrConfig));
-    dsrConfig.name = UA_STRING("TemperatureReader");
 
-    /* Filtro: accetta solo messaggi dal PublisherId 1 (edge-up-3) */
-    UA_UInt16 pubId = 2234;
-    //UA_Variant_setScalar(&dsrConfig.publisherId, &pubId, &UA_TYPES[UA_TYPES_UINT16]);
-    dsrConfig.publisherId.idType = UA_PUBLISHERIDTYPE_UINT16;
-    dsrConfig.publisherId.id.uint16 = pubId;
+    UA_ServerConfig *config = UA_Server_getConfig(server);
+    writerGroupConfig.securityMode = UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
+    writerGroupConfig.securityGroupId = UA_STRING(DEMO_SECURITYGROUPNAME);
+    writerGroupConfig.securityPolicy = &config->pubSubConfig.securityPolicies[0];
 
-    dsrConfig.writerGroupId   = 100;
-    dsrConfig.dataSetWriterId = 62541;  // non 1
-    /* DataSetMetaData: descrive il contenuto atteso del DataSet */
-    UA_DataSetMetaDataType_init(&dsrConfig.dataSetMetaData);
-    dsrConfig.dataSetMetaData.name = UA_STRING("TemperatureDataSet");
-    dsrConfig.dataSetMetaData.fieldsSize = 1;
-    dsrConfig.dataSetMetaData.fields = (UA_FieldMetaData *)
-        UA_calloc(1, sizeof(UA_FieldMetaData));
 
-    UA_FieldMetaData *field = &dsrConfig.dataSetMetaData.fields[0];
-    UA_FieldMetaData_init(field);
-    field->builtInType = UA_NS0ID_FLOAT;
-    field->dataType = UA_TYPES[UA_TYPES_FLOAT].typeId;
-    field->valueRank = -1;  /* scalare */
-    field->name = UA_STRING("Temperature");
+    UA_UadpWriterGroupMessageDataType writerGroupMessage;
+    UA_UadpWriterGroupMessageDataType_init(&writerGroupMessage);
+    writerGroupMessage.networkMessageContentMask =
+        (UA_UadpNetworkMessageContentMask)(UA_UADPNETWORKMESSAGECONTENTMASK_PUBLISHERID |
+                                           UA_UADPNETWORKMESSAGECONTENTMASK_GROUPHEADER |
+                                           UA_UADPNETWORKMESSAGECONTENTMASK_WRITERGROUPID |
+                                           UA_UADPNETWORKMESSAGECONTENTMASK_PAYLOADHEADER);
 
-    /* Message settings UADP: deve matchare quelli del publisher */
-    UA_UadpDataSetReaderMessageDataType dsrMsgConfig;
-    memset(&dsrMsgConfig, 0, sizeof(dsrMsgConfig));
-    dsrMsgConfig.networkMessageContentMask =
-        (UA_UadpNetworkMessageContentMask)
-        (UA_UADPNETWORKMESSAGECONTENTMASK_PUBLISHERID |
-         UA_UADPNETWORKMESSAGECONTENTMASK_GROUPHEADER |
-         UA_UADPNETWORKMESSAGECONTENTMASK_WRITERGROUPID |
-         UA_UADPNETWORKMESSAGECONTENTMASK_PAYLOADHEADER);
+    UA_ExtensionObject_setValue(&writerGroupConfig.messageSettings, &writerGroupMessage,
+                                &UA_TYPES[UA_TYPES_UADPWRITERGROUPMESSAGEDATATYPE]);
 
-    dsrConfig.messageSettings.encoding = UA_EXTENSIONOBJECT_DECODED;
-    dsrConfig.messageSettings.content.decoded.type =
-        &UA_TYPES[UA_TYPES_UADPDATASETREADERMESSAGEDATATYPE];
-    dsrConfig.messageSettings.content.decoded.data = &dsrMsgConfig;
+    UA_Server_addWriterGroup(server, connectionIdent, &writerGroupConfig, &writerGroupIdent);
 
-    UA_NodeId dsrId;
-    rc = UA_Server_addDataSetReader(server, rgId, &dsrConfig, &dsrId);
-    if(rc != UA_STATUSCODE_GOOD) {
-        printf("[SERVER]   DataSetReader FAILED: %s\n", UA_StatusCode_name(rc));
-        UA_free(dsrConfig.dataSetMetaData.fields);
-        return;
-    }
-    printf("[SERVER]   + DataSetReader (filter: pubId=1, wgId=100, dswId=1)\n");
+    UA_Server_setSksClient(server, writerGroupConfig.securityGroupId,
+                        sksClientConfigGlobal, SKS_SERVER_URL,
+                        sksPullRequestCallback, NULL);
 
-    /* ─── 4. TargetVariables: mappa il campo ricevuto alla variabile locale ── */
-    UA_FieldTargetDataType targetVar;
-    memset(&targetVar, 0, sizeof(UA_FieldTargetDataType));
-    targetVar.attributeId = UA_ATTRIBUTEID_VALUE;
-    targetVar.targetNodeId =   UA_NODEID_NUMERIC(NS_LOCAL, 50001);/* il tuo NodeId target */;
-    //rc=UA_Server_DataSetReader_createTargetVariables(server, dsrId, 1, &targetVar);
-    rc=UA_Server_setDataSetReaderTargetVariables(server, dsrId, 1, &targetVar);
-    if(rc != UA_STATUSCODE_GOOD) {
-        printf("[SERVER]   TargetVariables FAILED: %s\n", UA_StatusCode_name(rc));
-    } else {
-        printf("[SERVER]   + TargetVariable → ns=%d;i=50001 (ReceivedTemperature)\n",
-               NS_LOCAL);
-    }
-
-    UA_Server_enableDataSetReader(server, dsrId);
-    UA_Server_enablePubSubConnection(server, connId);
-    UA_Server_setReaderGroupOperational(server, rgId);
 }
 
 
- /* callback eseguita quando il client chiama il metodo */
-static UA_StatusCode startSubscriberCallback(
+static void
+addDataSetWriter(UA_Server *server) {
+    /* We need now a DataSetWriter within the WriterGroup. This means we must
+     * create a new DataSetWriterConfig and add call the addWriterGroup function. */
+    UA_DataSetWriterConfig dataSetWriterConfig;
+    memset(&dataSetWriterConfig, 0, sizeof(UA_DataSetWriterConfig));
+    dataSetWriterConfig.name = UA_STRING("Demo DataSetWriter");
+    dataSetWriterConfig.dataSetWriterId = 62541;
+    dataSetWriterConfig.keyFrameCount = 10;
+    UA_Server_addDataSetWriter(server, writerGroupIdent, publishedDataSetIdent,
+                               &dataSetWriterConfig, &dataSetWriterIdent);
+
+}
+
+static UA_StatusCode startPublisherCallback(
         UA_Server *server, const UA_NodeId *sessionId,
         void *sessionContext, const UA_NodeId *methodId,
         void *methodContext, const UA_NodeId *objectId,
         void *objectContext, size_t inputSize,
         const UA_Variant *input, size_t outputSize,
         UA_Variant *output) {
+    long publishingInterval = (long)(intptr_t)methodContext;
 
-    printf("[SERVER] StartSubscriber called — configuring PubSub...\n");
+    addPubSubConnection(server, &transportProfile, &networkAddressUrl);
+    addPublishedDataSet(server);
+    addDataSetField(server);
+    addWriterGroup(server, publishingInterval);
+    addDataSetWriter(server);
+    UA_Server_enableDataSetWriter(server, dataSetWriterIdent);
+    UA_Server_enableWriterGroup(server, writerGroupIdent);
+    //UA_Server_setWriterGroupOperational(server, writerGroupIdent);
+    UA_Server_enablePubSubConnection(server, connectionIdent);
+    //addConnectionEndpoint(server);
 
-    /* chiama le funzioni già scritte nel server */
-    setupSubscriber(server);
-
-    printf("[SERVER] Subscriber started\n");
+    printf("[SERVER] Publisher started\n");
     return UA_STATUSCODE_GOOD;
 }
 
 
-/* ═══════════════════════════════════════════════════════════
+
+/*========══════════════════════════════════════════════════════
  * Build UAFX AddressSpace
  *
  * Objects/
@@ -553,67 +580,54 @@ static UA_StatusCode startSubscriberCallback(
  *                   +-- RemoteSystem_1/ (RELY-10TSN12)
  * ═══════════════════════════════════════════════════════════ */
 
-static void buildUAFXAddressSpace(UA_Server *server, UA_Boolean logging) {
-    printf("[SERVER] Building UAFX AddressSpace...\n");
-
+static void buildUAFXAddressSpace(UA_Server *server, long publishingInterval) {
     UA_UInt16 nsFxAc = resolveNamespaceIndex(server, FXAC_NS_URI);
-    printf("[SERVER]   Namespace FX/AC resolved: %d\n", nsFxAc);
 
-    if(nsFxAc == 0) {
-        printf("[SERVER] ERROR: FX/AC namespace not found.\n");
-        return;
-    }
-
-    /* ─── 1. FxRoot ──────────────────────────────────────────── */
     UA_NodeId objectsFolder = UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER);
     UA_NodeId fxRoot = addFolder(server, objectsFolder, nsFxAc, "FxRoot");
 
-    /* ─── 2. AutomationComponent ─────────────────────────────── */
+    /* Crea AC — questo istanzia automaticamente Assets/, FunctionalEntities/, ecc. */
     UA_NodeId acNode = addTypedObject(server, fxRoot,
-                                      NS_LOCAL, "DensitySensor",
-                                      "Density Sensor AutomationComponent",
+                                      NS_LOCAL, "TemperatureSensor",
+                                      "Temperature Sensor AutomationComponent",
                                       nsFxAc, FXAC_ID_AUTOMATIONCOMPONENTTYPE);
-    printf("[SERVER]   + AutomationComponent: DensitySensor\n");
 
     addStringVariable(server, acNode, NS_LOCAL, "ConformanceName",
-                      "urn:example:uafx:density-sensor:v1.0");
+                      "urn:example:uafx:temperature-sensor:v1.0");
     addUInt32Variable(server, acNode, NS_LOCAL, "AggregatedHealth", 0);
 
-    registerEstablishConnectionsMethod(server, acNode);
-
+    /* Aggiunta metodi */
     UA_MethodAttributes methAttr = UA_MethodAttributes_default;
-    methAttr.displayName = lt("StartSubscriber");
+    methAttr.displayName = lt("StartPublisher");
     methAttr.executable = true;
     methAttr.userExecutable = true;
     UA_Server_addMethodNode(server, UA_NODEID_NULL, acNode,
         UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
-        qn(NS_LOCAL, "StartSubscriber"), methAttr,
-        startSubscriberCallback, 0, NULL, 0, NULL, NULL, NULL);
+        qn(NS_LOCAL, "StartPublisher"), methAttr,
+        startPublisherCallback, 0, NULL, 0, NULL, (void*)(intptr_t)publishingInterval, NULL);
+    registerEstablishConnectionsMethod(server, acNode);
 
-    /* ─── 3. Assets/ — usa cartella istanziata dal tipo ─────── */
+    /* ── Trova Assets/ già creata dal tipo e popolala ── */
     UA_NodeId assetsFolder = resolveChildByNameServer(server, acNode, "Assets");
-
     UA_NodeId assetNode = addTypedObject(server, assetsFolder,
                                          NS_LOCAL, "SensorHardware",
-                                         "Physical density sensor hardware",
+                                         "Physical temperature sensor hardware",
                                          nsFxAc, FXAC_ID_FXASSETTYPE);
     addStringVariable(server, assetNode, NS_LOCAL, "Manufacturer",      "AcmeCorp");
     addStringVariable(server, assetNode, NS_LOCAL, "ManufacturerUri",   "https://www.acmecorp-sensors.com");
-    addStringVariable(server, assetNode, NS_LOCAL, "Model",             "DenSensor-1000");
+    addStringVariable(server, assetNode, NS_LOCAL, "Model",             "TempSensor-1000");
     addStringVariable(server, assetNode, NS_LOCAL, "ProductCode",       "TS-1000-V2");
     addStringVariable(server, assetNode, NS_LOCAL, "HardwareRevision",  "2.0");
     addStringVariable(server, assetNode, NS_LOCAL, "SoftwareRevision",  "1.3.5");
-    addStringVariable(server, assetNode, NS_LOCAL, "DeviceClass",       "DensitySensor");
+    addStringVariable(server, assetNode, NS_LOCAL, "DeviceClass",       "TemperatureSensor");
     addStringVariable(server, assetNode, NS_LOCAL, "SerialNumber",      "SN-12345-ABCD");
 
-    /* ─── 4. FunctionalEntities/ — usa cartella istanziata dal tipo ── */
+    /* ── Trova FunctionalEntities/ già creata dal tipo e popolala ── */
     UA_NodeId feFolder = resolveChildByNameServer(server, acNode, "FunctionalEntities");
     UA_NodeId feNode = addTypedObject(server, feFolder,
-                                      NS_LOCAL, "DensityReadingFE",
-                                      "Density reading functional entity",
+                                      NS_LOCAL, "TemperatureReadingFE",
+                                      "Temperature reading functional entity",
                                       nsFxAc, FXAC_ID_FUNCTIONALENTITYTYPE);
-    printf("[SERVER]   + FunctionalEntity: DensityReadingFE\n");
-
     addStringVariable(server, feNode, NS_LOCAL, "AuthorUri",
                       "https://www.acmecorp-sensors.com");
     addStringVariable(server, feNode, NS_LOCAL, "AuthorAssignedIdentifier",
@@ -622,25 +636,28 @@ static void buildUAFXAddressSpace(UA_Server *server, UA_Boolean logging) {
                       "1.0.0.0");
     addUInt32Variable(server, feNode, NS_LOCAL, "OperationalHealth", 0);
 
-    /* OutputData/InputData/ConnectionEndpoints non istanziate dal tipo → crea manualmente */
-    UA_NodeId outputFolder = addFolder(server, feNode, NS_LOCAL, "OutputData");
-    addDensityVariable(server, outputFolder, NS_LOCAL, "Density");
-    printf("[SERVER]     + OutputData/Density\n");
+    /* ── Trova OutputData/ già creata dall'istanziazione di FunctionalEntityType ── */
+UA_NodeId outputFolder = addFolder(server, feNode, NS_LOCAL, "OutputData");
+    temperatureNodeId = addTemperatureVariable(server, outputFolder, NS_LOCAL, "Temperature");
 
-    UA_NodeId inputFolder = addFolder(server, feNode, NS_LOCAL, "InputData");
-    addInputVariable(server, inputFolder, NS_LOCAL, "Temperature", logging);
-    printf("[SERVER]     + InputData/Temperature\n");
+    addFolder(server, feNode, NS_LOCAL, "InputData");
+   // addInputVariable(server,inputFolder, NS_LOCAL, "Density");
+   // printf("[SERVER]   + InputData/ReceivedTemperature (target for PubSub subscriber)\n");
 
     addFolder(server, feNode, NS_LOCAL, "ConnectionEndpoints");
 
-    /* ─── 5. ComponentCapabilities/ — usa cartella istanziata dal tipo ── */
+    /* ───  ComponentCapabilities/ ──────────────────────────── */
     UA_NodeId capFolder = addFolder(server, acNode, NS_LOCAL, "ComponentCapabilities");
     addUInt32Variable(server, capFolder, NS_LOCAL, "MaxConnections", 4);
     addUInt32Variable(server, capFolder, NS_LOCAL, "MinConnections", 0);
+
     printf("[SERVER] + UAFX AddressSpace build complete\n\n");
 
+    /* ─── 6. NetworkInterfaces con LLDP (Part 82, 6.5.2) ────── */
     buildNetworkInterfaces(server);
+
 }
+
 
 
 
@@ -665,7 +682,10 @@ int main(int argc, char **argv) {
     /* ─── Crea server ────────────────────────────────────────── */
     UA_Server *server = UA_Server_new();
     UA_ServerConfig *config = UA_Server_getConfig(server);
-
+     transportProfile =
+        UA_STRING("http://opcfoundation.org/UA-Profile/Transport/pubsub-eth-uadp");
+     networkAddressUrl.networkInterface = UA_STRING(opts.networkInterface);
+    networkAddressUrl.url = UA_STRING(opts.publishUrl);
     static UA_DataTypeArray customDataTypesAC = {
         NULL,
         UA_TYPES_UAFX_AC_COUNT,
@@ -689,13 +709,33 @@ int main(int argc, char **argv) {
     UA_String hostname = UA_String_fromChars(SERVER_PUBLIC_URL);
     config->applicationDescription.applicationType = UA_APPLICATIONTYPE_SERVER;
 
+        config->pubSubConfig.securityPolicies =
+        (UA_PubSubSecurityPolicy *)UA_malloc(sizeof(UA_PubSubSecurityPolicy));
+    config->pubSubConfig.securityPoliciesSize = 1;
+    UA_PubSubSecurityPolicy_Aes256Ctr(config->pubSubConfig.securityPolicies,
+                                      config->logging);
+ 
+    UA_ByteString pubCert = loadFile(PUB_CERT_FILE);
+    UA_ByteString pubKey  = loadFile(PUB_KEY_FILE);
+    if(pubCert.length == 0 || pubKey.length == 0) {
+        printf("[ERROR] Cannot load %s / %s — generate them first "
+               "(see tools/certs/create_self-signed.py)\n",
+               PUB_CERT_FILE, PUB_KEY_FILE);
+        UA_Server_delete(server);
+        return EXIT_FAILURE;
+    }
+    sksClientConfigGlobal = encryptedSksClient(SKS_USERNAME, SKS_PASSWORD, "urn:example:uafx:temperature-sensor-1",
+                                               pubCert, pubKey);
+    UA_ByteString_clear(&pubCert);
+    UA_ByteString_clear(&pubKey);
+
+
     UA_String_clear(&config->applicationDescription.applicationUri);
-    config->applicationDescription.applicationUri =
-        UA_String_fromChars("urn:example:uafx:density-sensor-1");
+    config->applicationDescription.applicationUri = UA_String_fromChars("urn:example:uafx:temperature-sensor-1");
 
     UA_LocalizedText_clear(&config->applicationDescription.applicationName);
     config->applicationDescription.applicationName =
-        UA_LOCALIZEDTEXT_ALLOC("en-US", "UAFX Density Sensor");
+        UA_LOCALIZEDTEXT_ALLOC("en-US", "UAFX Temperature Sensor");
     config->applicationDescription.discoveryUrlsSize = 1;
     config->applicationDescription.discoveryUrls =
         (UA_String*)UA_Array_new(1, &UA_TYPES[UA_TYPES_STRING]);
@@ -720,9 +760,9 @@ int main(int argc, char **argv) {
 
     /* ─── Carica i tipi UAFX dal nodeset generato ────────────── */
     printf("[SERVER] Loading UAFX nodesets...\n");
-    UA_StatusCode retval     = namespace_di_generated(server);
+    UA_StatusCode retval = namespace_di_generated(server);
     UA_StatusCode retval_data = namespace_uafx_data_generated(server);
-    UA_StatusCode retval_ac   = namespace_uafx_ac_generated(server);
+    UA_StatusCode retval_ac = namespace_uafx_ac_generated(server);
 
     if(retval != UA_STATUSCODE_GOOD || retval_data != UA_STATUSCODE_GOOD || retval_ac != UA_STATUSCODE_GOOD) {
         printf("[WARNING] Address Space loaded with some missing sub-nodes (Code: %s).\n",
@@ -733,10 +773,19 @@ int main(int argc, char **argv) {
     }
 
     /* ─── Costruisci AddressSpace ────────────────────────────── */
-    buildUAFXAddressSpace(server, opts.rtLog);
+    buildUAFXAddressSpace(server, opts.cycleTime);
 
-    if (opts.autostart)
-        setupSubscriber(server);
+    if (opts.autostart) {
+        addPubSubConnection(server, &transportProfile, &networkAddressUrl);
+        addPublishedDataSet(server);
+        addDataSetField(server);
+        addWriterGroup(server, opts.cycleTime);
+        addDataSetWriter(server);
+        UA_Server_enableDataSetWriter(server, dataSetWriterIdent);
+        UA_Server_enableWriterGroup(server, writerGroupIdent);
+        UA_Server_enablePubSubConnection(server, connectionIdent);
+        printf("[SERVER] Publisher started automatically\n");
+    }
 
     /* ─── Avvia server ───────────────────────────────────────── */
     retval = UA_Server_run_startup(server);
@@ -746,9 +795,6 @@ int main(int argc, char **argv) {
         UA_Server_delete(server);
         return EXIT_FAILURE;
     }
-	/* Costruzione sub statico*/
-	//setupSubscriber(server);
-
 
     /* ─── Registrazione all'LDS ──────────────────────────────── */
     UA_ClientConfig cc;
@@ -757,12 +803,13 @@ int main(int argc, char **argv) {
 
     UA_String discoveryUrl = UA_STRING(LDS_URL);
 
+    /*
     UA_StatusCode retval_lds = UA_Server_registerDiscovery(server, &cc, discoveryUrl, UA_STRING_NULL);
     if(retval_lds != UA_STATUSCODE_GOOD) {
         printf("[WARNING] LDS registration failed: %s\n", UA_StatusCode_name(retval_lds));
     } else {
         printf("[SERVER] + LDS registration OK\n");
-    }
+    }*/
 
     printf("\n========================================================\n");
     printf("  SERVER RUNNING on %s\n", SERVER_PUBLIC_URL);
@@ -770,12 +817,12 @@ int main(int argc, char **argv) {
     printf("UAFX Structure:\n");
     printf("  Objects/\n");
     printf("  +-- FxRoot/\n");
-    printf("  |   +-- DensitySensor/ [AutomationComponentType]\n");
+    printf("  |   +-- TemperatureSensor/ [AutomationComponentType]\n");
     printf("  |       +-- Assets/\n");
     printf("  |       |   +-- SensorHardware/ [FxAssetType]\n");
     printf("  |       +-- FunctionalEntities/\n");
-    printf("  |       |   +-- DensityReadingFE/ [FunctionalEntityType]\n");
-    printf("  |       |       +-- OutputData/Density (dynamic)\n");
+    printf("  |       |   +-- TemperatureReadingFE/ [FunctionalEntityType]\n");
+    printf("  |       |       +-- OutputData/Temperature (dynamic)\n");
     printf("  |       +-- ComponentCapabilities/\n");
     printf("  +-- NetworkInterfaces/\n");
     printf("      +-- enp0s31f6/\n");
@@ -787,14 +834,33 @@ int main(int argc, char **argv) {
     printf("Press Ctrl+C to stop\n\n");
 
     /* ─── Loop principale ────────────────────────────────────── */
-    if (opts.schedPrio)
-        setupSchedulePriority(opts.schedPrio);
-    
     if (opts.rtCore)
         setupCpuAffinity(opts.rtCore);
+    
+    if (opts.schedPrio)
+        setupSchedulePriority(opts.schedPrio);
 
-    while(running) {
-        UA_Server_run_iterate(server, true);
+    if (opts.rt) {
+        struct timespec next;
+        clock_gettime(CLOCK_REALTIME, &next);
+        while(running) {
+            next.tv_nsec += opts.cycleTime;
+            while(next.tv_nsec >= 1000000000L) {
+                next.tv_nsec -= 1000000000L;
+                next.tv_sec++;
+            }
+
+            int rc;
+            do {
+                rc = clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &next, NULL);
+            } while(rc == EINTR);
+
+            UA_Server_run_iterate(server, false);
+        }
+    } else {
+        while(running) {
+            UA_Server_run_iterate(server, true);
+        }
     }
 
     printf("\n[SERVER] Shutting down...\n");

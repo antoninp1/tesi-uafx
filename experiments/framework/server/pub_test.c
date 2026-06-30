@@ -49,9 +49,6 @@
 #define LDS_URL          "opc.tcp://192.168.17.112:4840"
 #define SERVER_PUBLIC_URL "opc.tcp://192.168.17.92:4841"
 
-#define PUBLISH_INTERFACE "enp43s0"
-#define PUBLISH_URL "opc.eth://03-00-00-00-00-03:10.6"
-
 #define SCHED_PRIORITY 80
 
 static UA_NodeId connectionIdent, publishedDataSetIdent, writerGroupIdent,
@@ -598,13 +595,16 @@ int main(int argc, char **argv) {
     printf("========================================================\n\n");
     CliOptions opts = parseArgs(argc, argv);
 
+    if (opts.rt)
+        lockMemoryRT();
+
     /* ─── Crea server ────────────────────────────────────────── */
     UA_Server *server = UA_Server_new();
     UA_ServerConfig *config = UA_Server_getConfig(server);
      transportProfile =
         UA_STRING("http://opcfoundation.org/UA-Profile/Transport/pubsub-eth-uadp");
-     networkAddressUrl.networkInterface = UA_STRING(PUBLISH_INTERFACE);
-    networkAddressUrl.url = UA_STRING(PUBLISH_URL);
+     networkAddressUrl.networkInterface = UA_STRING(opts.networkInterface);
+    networkAddressUrl.url = UA_STRING(opts.publishUrl);
     static UA_DataTypeArray customDataTypesAC = {
         NULL,
         UA_TYPES_UAFX_AC_COUNT,
@@ -740,7 +740,7 @@ int main(int argc, char **argv) {
 
     if (opts.rt) {
         struct timespec next;
-        clock_gettime(CLOCK_MONOTONIC, &next);
+        clock_gettime(CLOCK_REALTIME, &next);
         while(running) {
             next.tv_nsec += opts.cycleTime;
             while(next.tv_nsec >= 1000000000L) {
@@ -750,7 +750,7 @@ int main(int argc, char **argv) {
 
             int rc;
             do {
-                rc = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next, NULL);
+                rc = clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &next, NULL);
             } while(rc == EINTR);
 
             UA_Server_run_iterate(server, false);

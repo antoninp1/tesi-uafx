@@ -10,7 +10,8 @@ static ExtOption LONG_OPTS[] = {
     {{"rt",      no_argument,       0, 'r'}, NULL, "Enable real-time scheduling for the publisher"},
     {{"rt-log",      no_argument,       0, 'l'}, NULL, "Enable real-time logging"},
     {{"cycle-time", required_argument, 0, 'c'}, NULL, "Define the cycle time for real-time scheduling in ms"},
-    {{"publish-url", required_argument, 0, 'u'}, NULL, "Define the URL for publishing"},
+    {{"pub-url", required_argument, 0, 'u'}, NULL, "Define the URL for publishing"},
+    {{"iface", required_argument, 0, 'i'}, NULL, "Define the interface for publishing"},
 #endif
     {{"rt-core", required_argument, 0, 'c'}, NULL, "Define the CPU core for real-time scheduling"},
     {{"sched-prio", required_argument, 0, 'p'}, NULL, "Define the scheduling priority for real-time tasks"},
@@ -18,6 +19,13 @@ static ExtOption LONG_OPTS[] = {
     {{"help",    no_argument,       0, 'h'}, NULL, "Display this help message"},
     {{0, 0, 0, 0}, NULL, NULL}
 };
+
+
+#ifdef IS_PUBLISHER
+    #define OPT_STRING "rlc:u:i:p:ah"
+#else
+    #define OPT_STRING "c:p:ah"
+#endif
 
 void printUsage(char *program_name) {
     printf("Usage: %s [options]\n", program_name);
@@ -33,7 +41,7 @@ void printUsage(char *program_name) {
 
 
 CliOptions parseArgs(int argc, char **argv) {
-    CliOptions opts = { .rt = false, .rtLog = false, .rtCore = 2, .schedPrio = 80, .cycleTime = 1000000L, .publishUrl = "opc.eth://03-00-00-00-00-03:10.6", .autostart = false};
+    CliOptions opts = { .rt = false, .rtLog = false, .rtCore = 2, .schedPrio = 80, .cycleTime = 1000000L, .publishUrl = "opc.eth://03-00-00-00-00-03:10.6", .networkInterface = "enp43s0", .autostart = false};
 
     int num_opts = sizeof(LONG_OPTS) / sizeof(ExtOption);
     struct option long_options[num_opts];
@@ -49,6 +57,7 @@ CliOptions parseArgs(int argc, char **argv) {
             case 'l': opts.rtLog = true; break;
             case 't': opts.cycleTime = atol(optarg)*1000*1000000L; break;
             case 'u': opts.publishUrl = strdup(optarg); break;
+            case 'i': opts.networkInterface = strdup(optarg); break;
         #endif
             case 'c': opts.rtCore = atoi(optarg); break;
             case 'p': opts.schedPrio = atoi(optarg); break;
