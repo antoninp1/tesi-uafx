@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <getopt.h>
 
+#define NO_SCHED_PRIO -1
+#define NO_RT_CORE -1
 
 typedef struct {
     struct option gnu_opt;
@@ -16,11 +18,28 @@ typedef struct {
     int rtCore;
     int schedPrio;
     long cycleTime;
-    char* publishUrl;
-    char* networkInterface;
+    char* url;
+    char* iface;
     UA_Boolean autostart;
-
+    UA_Boolean sks;
+    char * certificate;
+    char * key;
 } CliOptions;
+
+enum {
+    OPT_HELP,
+    OPT_RT,
+    OPT_RT_LOG,
+    OPT_CYCLE_TIME,
+    OPT_URL,
+    OPT_IFACE,
+    OPT_RT_CORE,
+    OPT_SCHED_PRIO,
+    OPT_SKS,
+    OPT_CERT,
+    OPT_KEY,
+    OPT_AUTOSTART
+};
 
 CliOptions parseArgs(int argc, char **argv);
 void printUsage(char *program_name);

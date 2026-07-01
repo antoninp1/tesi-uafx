@@ -3,29 +3,27 @@
 #include <stdio.h>
 #include <getopt.h>
 #include "cli.h"
-
+#include <argp.h>
 
 static ExtOption LONG_OPTS[] = {
 #ifdef IS_PUBLISHER
-    {{"rt",      no_argument,       0, 'r'}, NULL, "Enable real-time scheduling for the publisher"},
-    {{"rt-log",      no_argument,       0, 'l'}, NULL, "Enable real-time logging"},
-    {{"cycle-time", required_argument, 0, 'c'}, NULL, "Define the cycle time for real-time scheduling in ms"},
-    {{"pub-url", required_argument, 0, 'u'}, NULL, "Define the URL for publishing"},
-    {{"iface", required_argument, 0, 'i'}, NULL, "Define the interface for publishing"},
+    {{"rt",      no_argument,       0,  OPT_RT}, NULL, "Enable real-time scheduling for the publisher"},
+    {{"rt-log",      no_argument,       0, OPT_RT_LOG}, NULL, "Enable real-time logging"},
+    {{"cycle-time", required_argument, 0, OPT_CYCLE_TIME}, NULL, "Define the cycle time for real-time scheduling in ms"},
+    {{"url", required_argument, 0, OPT_URL}, NULL, "Define the publisher URL"},
+    {{"iface", required_argument, 0, OPT_IFACE}, NULL, "Define the interface for publishing"},
 #endif
-    {{"rt-core", required_argument, 0, 'c'}, NULL, "Define the CPU core for real-time scheduling"},
-    {{"sched-prio", required_argument, 0, 'p'}, NULL, "Define the scheduling priority for real-time tasks"},
-    {{"autostart", no_argument, 0, 'a'}, NULL, "Automatically start the server without waiting for user input"},
-    {{"help",    no_argument,       0, 'h'}, NULL, "Display this help message"},
+    {{"rt-core", required_argument, 0, OPT_RT_CORE}, NULL, "Define the CPU core for real-time scheduling"},
+    {{"sched-prio", required_argument, 0, OPT_SCHED_PRIO}, NULL, "Define the scheduling priority for real-time tasks"},
+    {{"sks", no_argument, 0, OPT_SKS}, NULL, "Enable encryption with SKS server"},
+    {{"cert", required_argument, 0, OPT_CERT}, NULL, "Set the PubSub SKS client certificate"},
+    {{"key", required_argument, 0, OPT_KEY}, NULL, "Set the PubSub SKS client private key"},
+    {{"autostart", no_argument, 0, OPT_AUTOSTART}, NULL, "Automatically start the server without waiting for user input"},
+    {{"help",    no_argument,       0, OPT_HELP}, NULL, "Display this help message"},
     {{0, 0, 0, 0}, NULL, NULL}
 };
 
-
-#ifdef IS_PUBLISHER
-    #define OPT_STRING "rlc:u:i:p:ah"
-#else
-    #define OPT_STRING "c:p:ah"
-#endif
+#define OPT_STRING ""
 
 void printUsage(char *program_name) {
     printf("Usage: %s [options]\n", program_name);
@@ -41,7 +39,9 @@ void printUsage(char *program_name) {
 
 
 CliOptions parseArgs(int argc, char **argv) {
-    CliOptions opts = { .rt = false, .rtLog = false, .rtCore = 2, .schedPrio = 80, .cycleTime = 1000000L, .publishUrl = "opc.eth://03-00-00-00-00-03:10.6", .networkInterface = "enp43s0", .autostart = false};
+    CliOptions opts = { .rt = false, .rtLog = false, .rtCore = NO_RT_CORE, .schedPrio = NO_SCHED_PRIO, .cycleTime = 1000000L, 
+        .url = "opc.eth://03-00-00-00-00-03:10.6", .iface = "enp43s0", .autostart = false, 
+        .sks = false, .certificate = NULL, .key = NULL };
 
     int num_opts = sizeof(LONG_OPTS) / sizeof(ExtOption);
     struct option long_options[num_opts];
@@ -53,16 +53,19 @@ CliOptions parseArgs(int argc, char **argv) {
     while((opt = getopt_long(argc, argv, OPT_STRING, long_options, NULL)) != -1) {
         switch(opt) {
         #ifdef IS_PUBLISHER
-            case 'r': opts.rt = true; break;
-            case 'l': opts.rtLog = true; break;
-            case 't': opts.cycleTime = atol(optarg)*1000*1000000L; break;
-            case 'u': opts.publishUrl = strdup(optarg); break;
-            case 'i': opts.networkInterface = strdup(optarg); break;
+            case OPT_RT: opts.rt = true; break;
+            case OPT_RT_LOG: opts.rtLog = true; break;
+            case OPT_CYCLE_TIME: opts.cycleTime = atol(optarg)*1000000L; break;
+            case OPT_URL: opts.url = strdup(optarg); break;
+            case OPT_IFACE: opts.iface = strdup(optarg); break;
         #endif
-            case 'c': opts.rtCore = atoi(optarg); break;
-            case 'p': opts.schedPrio = atoi(optarg); break;
-            case 'a': opts.autostart = true; break;
-            case 'h':
+            case OPT_RT_CORE: opts.rtCore = atoi(optarg); break;
+            case OPT_SCHED_PRIO: opts.schedPrio = atoi(optarg); break;
+            case OPT_SKS: opts.sks = true; break;
+            case OPT_CERT: opts.certificate = strdup(optarg); break;
+            case OPT_KEY: opts.key = strdup(optarg); break;
+            case OPT_AUTOSTART: opts.autostart = true; break;
+            case OPT_HELP:
                 printUsage(argv[0]);
                 exit(0);
             default:

@@ -18,6 +18,7 @@
 #include <open62541/server_config_default.h>
 #include <open62541/server_pubsub.h>
 #include <open62541/client_config_default.h>
+#include <open62541/plugin/securitypolicy_default.h>
 #include "types_di_generated.h"
 #include "types_uafx_data_generated.h"
 #include "types_uafx_ac_generated.h"
@@ -38,6 +39,14 @@
 /* ─── Namespace index di FX/AC nel server ─────────────────── */
 #define FXAC_NS_URI   "http://opcfoundation.org/UA/FX/AC/"
 
+#define SKS_SERVER_URL          "opc.tcp://192.168.17.112:4850"
+#define DEMO_SECURITYGROUPNAME  "UafxSecurityGroup"
+#define SKS_USERNAME            "uafx-sks-client"
+#define SKS_PASSWORD            "ChangeThisPasswordInLab"
+
+#define SUB_CERT_FILE "scripts/certs/subscriber.cert.der"
+#define SUB_KEY_FILE  "scripts/certs/subscriber.key.der"
+
 /* NodeId dei tipi UAFX (numeric id fisso da nodeset XML) */
 #define FXAC_ID_AUTOMATIONCOMPONENTTYPE  2
 #define FXAC_ID_FXASSETTYPE              3
@@ -48,12 +57,80 @@
 #define SERVER_PUBLIC_URL "opc.tcp://192.168.17.184:4841"
 
 static volatile UA_Boolean running = true;
+static UA_NodeId readerGroupIdent;
+static UA_ClientConfig *sksClientConfigGlobal = NULL;
 
 static void stopHandler(int sig) {
     printf("\n[SERVER] Shutdown signal received\n");
     running = false;
 }
 
+static UA_ByteString
+loadFile(const char *const path) {
+    UA_ByteString fileContents = UA_STRING_NULL;
+    FILE *fp = fopen(path, "rb");
+    if(!fp) {
+        printf("[SERVER] ERROR: cannot open %s\n", path);
+        return fileContents;
+    }
+    fseek(fp, 0, SEEK_END);
+    long length = ftell(fp);
+    if(length < 0) { fclose(fp); return fileContents; }
+    fileContents.length = (size_t)length;
+    fileContents.data = (UA_Byte *)UA_malloc(fileContents.length);
+    if(fileContents.data) {
+        fseek(fp, 0, SEEK_SET);
+        size_t read = fread(fileContents.data, 1, fileContents.length, fp);
+        if(read != fileContents.length)
+            UA_ByteString_clear(&fileContents);
+    } else {
+        fileContents.length = 0;
+    }
+    fclose(fp);
+    return fileContents;
+}
+ 
+static UA_ClientConfig *
+encryptedSksClient(const char *username, const char *password, const char *applicationUri,
+                   UA_ByteString certificate, UA_ByteString privateKey) {
+    UA_ClientConfig *cc = (UA_ClientConfig *)UA_calloc(1, sizeof(UA_ClientConfig));
+    cc->securityMode = UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
+    UA_ClientConfig_setDefaultEncryption(cc, certificate, privateKey, NULL, 0, NULL, 0);
+    cc->securityPolicyUri = UA_STRING_ALLOC("http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256");
+    UA_String_clear(&cc->clientDescription.applicationUri);
+    cc->clientDescription.applicationUri = UA_String_fromChars(applicationUri);
+ 
+    UA_UserNameIdentityToken *identityToken = UA_UserNameIdentityToken_new();
+    identityToken->userName = UA_STRING_ALLOC(username);
+    identityToken->password = UA_STRING_ALLOC(password);
+    UA_ExtensionObject_clear(&cc->userIdentityToken);
+    cc->userIdentityToken.encoding = UA_EXTENSIONOBJECT_DECODED;
+    cc->userIdentityToken.content.decoded.type = &UA_TYPES[UA_TYPES_USERNAMEIDENTITYTOKEN];
+    cc->userIdentityToken.content.decoded.data = identityToken;
+    return cc;
+}
+ 
+static void
+sksPullRequestCallback(UA_Server *server, UA_StatusCode sksPullRequestStatus,
+                       void *context) {
+    UA_PubSubState state = UA_PUBSUBSTATE_OPERATIONAL;
+    UA_Server_getReaderGroupState(server, readerGroupIdent, &state);
+    if(sksPullRequestStatus == UA_STATUSCODE_GOOD) { //&& state == UA_PUBSUBSTATE_PREOPERATIONAL) {
+        /*
+        UA_Server_setReaderGroupActivateKey(server, readerGroupIdent);
+        printf("[SERVER] SKS: encryption key activated for ReaderGroup\n");*/
+        UA_StatusCode rcKey = UA_Server_setReaderGroupActivateKey(server, readerGroupIdent);
+        printf("[SERVER] SKS: encryption key activated for ReaderGroup "
+           "(activateKey status: %s)\n", UA_StatusCode_name(rcKey));
+        UA_StatusCode rcOp = UA_Server_setReaderGroupOperational(server, readerGroupIdent);
+        printf("[SERVER] SKS: ReaderGroup enable requested "
+           "(enable status: %s)\n", UA_StatusCode_name(rcOp));
+    } else if(sksPullRequestStatus != UA_STATUSCODE_GOOD) {
+        printf("[SERVER] SKS: pull request FAILED: %s\n",
+               UA_StatusCode_name(sksPullRequestStatus));
+    }
+}
+ 
 
 
 /* ═══════════════════════════════════════════════════════════
@@ -399,7 +476,7 @@ static void buildNetworkInterfaces(UA_Server *server) {
     printf("[SERVER]   ChassisId (shared): 00:07:32:ae:79:1d\n\n");
 }
 
-static void setupSubscriber(UA_Server *server) {
+static void setupSubscriber(UA_Server *server, CliOptions *opts) {
     printf("[SERVER] Setting up PubSub Subscriber...\n");
 
     /* ─── 1. PubSubConnection (stessa multicast del publisher) ── */
@@ -411,8 +488,8 @@ static void setupSubscriber(UA_Server *server) {
     connConfig.enabled = true;
 
     UA_NetworkAddressUrlDataType addr;
-    addr.networkInterface = UA_STRING("enp43s0");
-    addr.url = UA_STRING("opc.eth://03-00-00-00-00-03:10.6");
+    addr.networkInterface = UA_STRING(opts->iface);
+    addr.url = UA_STRING(opts->url);
 
     UA_Variant_setScalar(&connConfig.address, &addr,
                          &UA_TYPES[UA_TYPES_NETWORKADDRESSURLDATATYPE]);
@@ -434,13 +511,25 @@ static void setupSubscriber(UA_Server *server) {
     memset(&rgConfig, 0, sizeof(rgConfig));
     rgConfig.name = UA_STRING("TemperatureReaderGroup");
 
+    if (opts->sks) {
+        UA_ServerConfig *config = UA_Server_getConfig(server);
+        rgConfig.securityMode = UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
+        rgConfig.securityGroupId = UA_STRING(DEMO_SECURITYGROUPNAME);
+        rgConfig.securityPolicy = &config->pubSubConfig.securityPolicies[0];
+    }
+
     UA_NodeId rgId;
     rc = UA_Server_addReaderGroup(server, connId, &rgConfig, &rgId);
     if(rc != UA_STATUSCODE_GOOD) {
         printf("[SERVER]   ReaderGroup FAILED: %s\n", UA_StatusCode_name(rc));
         return;
     }
+    readerGroupIdent = rgId;
     printf("[SERVER]   + ReaderGroup\n");
+    
+    UA_Server_setSksClient(server, rgConfig.securityGroupId,
+                        sksClientConfigGlobal, SKS_SERVER_URL,
+                        sksPullRequestCallback, NULL);
 
     /* ─── 3. DataSetReader ────────────────────────────── */
     UA_DataSetReaderConfig dsrConfig;
@@ -509,7 +598,7 @@ static void setupSubscriber(UA_Server *server) {
 
     UA_Server_enableDataSetReader(server, dsrId);
     UA_Server_enablePubSubConnection(server, connId);
-    UA_Server_setReaderGroupOperational(server, rgId);
+    //UA_Server_setReaderGroupOperational(server, rgId);
 }
 
 
@@ -522,10 +611,11 @@ static UA_StatusCode startSubscriberCallback(
         const UA_Variant *input, size_t outputSize,
         UA_Variant *output) {
 
+    CliOptions *contextOptions = (CliOptions *)(methodContext);
     printf("[SERVER] StartSubscriber called — configuring PubSub...\n");
 
     /* chiama le funzioni già scritte nel server */
-    setupSubscriber(server);
+    setupSubscriber(server, contextOptions);
 
     printf("[SERVER] Subscriber started\n");
     return UA_STATUSCODE_GOOD;
@@ -689,6 +779,27 @@ int main(int argc, char **argv) {
     UA_String hostname = UA_String_fromChars(SERVER_PUBLIC_URL);
     config->applicationDescription.applicationType = UA_APPLICATIONTYPE_SERVER;
 
+    config->pubSubConfig.securityPolicies = (UA_PubSubSecurityPolicy *)UA_malloc(sizeof(UA_PubSubSecurityPolicy));
+    config->pubSubConfig.securityPoliciesSize = 1;
+    UA_PubSubSecurityPolicy_Aes256Ctr(config->pubSubConfig.securityPolicies, config->logging);
+
+    UA_ByteString subCert = loadFile(opts.certificate);
+    UA_ByteString subKey  = loadFile(opts.key);
+    if(subCert.length == 0 || subKey.length == 0) {
+        printf("[ERROR] Cannot load %s / %s — generate them first "
+               "(see tools/certs/create_self-signed.py)\n",
+               SUB_CERT_FILE, SUB_KEY_FILE);
+        UA_Server_delete(server);
+        return EXIT_FAILURE;
+    }
+
+    if (opts.sks)
+        sksClientConfigGlobal = encryptedSksClient(SKS_USERNAME, SKS_PASSWORD, "urn:example:uafx:density-sensor-1", 
+            UA_BYTESTRING_ALLOC(opts.certificate), UA_BYTESTRING_ALLOC(opts.key));
+
+    UA_ByteString_clear(&subCert);
+    UA_ByteString_clear(&subKey);
+
     UA_String_clear(&config->applicationDescription.applicationUri);
     config->applicationDescription.applicationUri =
         UA_String_fromChars("urn:example:uafx:density-sensor-1");
@@ -736,7 +847,7 @@ int main(int argc, char **argv) {
     buildUAFXAddressSpace(server, opts.rtLog);
 
     if (opts.autostart)
-        setupSubscriber(server);
+        setupSubscriber(server, &opts);
 
     /* ─── Avvia server ───────────────────────────────────────── */
     retval = UA_Server_run_startup(server);
@@ -787,10 +898,10 @@ int main(int argc, char **argv) {
     printf("Press Ctrl+C to stop\n\n");
 
     /* ─── Loop principale ────────────────────────────────────── */
-    if (opts.schedPrio)
+    if (opts.schedPrio != NO_SCHED_PRIO)
         setupSchedulePriority(opts.schedPrio);
     
-    if (opts.rtCore)
+    if (opts.rtCore != NO_RT_CORE)
         setupCpuAffinity(opts.rtCore);
 
     while(running) {
