@@ -49,9 +49,6 @@
 #define SKS_USERNAME            "uafx-sks-client"
 #define SKS_PASSWORD            "ChangeThisPasswordInLab"
 
-#define PUB_CERT_FILE "scripts/certs/publisher.cert.der"
-#define PUB_KEY_FILE  "scripts/certs/publisher.key.der"
-
 /* NodeId dei tipi UAFX (numeric id fisso da nodeset XML) */
 #define FXAC_ID_AUTOMATIONCOMPONENTTYPE  2
 #define FXAC_ID_FXASSETTYPE              3
@@ -499,7 +496,7 @@ int main(int argc, char **argv) {
     UA_Server *server = UA_Server_new();
     UA_ServerConfig *config = UA_Server_getConfig(server);
      transportProfile =
-        UA_STRING("http://opcfoundation.org/UA-Profile/Transport/pubsub-udp-uadp");
+        UA_STRING("http://opcfoundation.org/UA-Profile/Transport/pubsub-eth-uadp");
      networkAddressUrl.networkInterface = UA_STRING(opts.iface);
     networkAddressUrl.url = UA_STRING(opts.url);
     static UA_DataTypeArray customDataTypesAC = {
@@ -525,6 +522,8 @@ int main(int argc, char **argv) {
     UA_String hostname = UA_String_fromChars(SERVER_PUBLIC_URL);
     config->applicationDescription.applicationType = UA_APPLICATIONTYPE_SERVER;
 
+
+
     if (opts.sks) {
         config->pubSubConfig.securityPolicies =
         (UA_PubSubSecurityPolicy *)UA_malloc(sizeof(UA_PubSubSecurityPolicy));
@@ -532,12 +531,12 @@ int main(int argc, char **argv) {
     UA_PubSubSecurityPolicy_Aes256Ctr(config->pubSubConfig.securityPolicies,
                                       config->logging);
  
-    UA_ByteString pubCert = loadFile(PUB_CERT_FILE);
-    UA_ByteString pubKey  = loadFile(PUB_KEY_FILE);
+    UA_ByteString pubCert = loadFile(opts.cert);
+    UA_ByteString pubKey  = loadFile(opts.key);
     if(pubCert.length == 0 || pubKey.length == 0) {
         printf("[ERROR] Cannot load %s / %s — generate them first "
                "(see tools/certs/create_self-signed.py)\n",
-               PUB_CERT_FILE, PUB_KEY_FILE);
+               opts.cert, opts.key);
         UA_Server_delete(server);
         return EXIT_FAILURE;
     }
@@ -620,16 +619,16 @@ int main(int argc, char **argv) {
     UA_ClientConfig cc;
     memset(&cc, 0, sizeof(UA_ClientConfig));
     UA_ClientConfig_setDefault(&cc);
+    cc.securityMode = UA_MESSAGESECURITYMODE_NONE;
 
     UA_String discoveryUrl = UA_STRING(LDS_URL);
 
-    /*
     UA_StatusCode retval_lds = UA_Server_registerDiscovery(server, &cc, discoveryUrl, UA_STRING_NULL);
     if(retval_lds != UA_STATUSCODE_GOOD) {
         printf("[WARNING] LDS registration failed: %s\n", UA_StatusCode_name(retval_lds));
     } else {
         printf("[SERVER] + LDS registration OK\n");
-    }*/
+    }
 
     printf("\n========================================================\n");
     printf("  SERVER RUNNING on %s\n", SERVER_PUBLIC_URL);

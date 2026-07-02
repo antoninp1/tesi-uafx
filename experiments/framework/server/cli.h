@@ -22,7 +22,7 @@ typedef struct {
     char* iface;
     UA_Boolean autostart;
     UA_Boolean sks;
-    char * certificate;
+    char * cert;
     char * key;
 } CliOptions;
 

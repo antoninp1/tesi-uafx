@@ -37,6 +37,7 @@
 #include "rt_functions.h"
 #include "cli.h"
 #include "sks_helpers.h"
+#include "uafx_common.h"
 
 /* ─── Namespace index di FX/AC nel server ─────────────────── */
 #define FXAC_NS_URI   "http://opcfoundation.org/UA/FX/AC/"
@@ -45,9 +46,6 @@
 #define DEMO_SECURITYGROUPNAME  "UafxSecurityGroup"
 #define SKS_USERNAME            "uafx-sks-client"
 #define SKS_PASSWORD            "ChangeThisPasswordInLab"
-
-#define SUB_CERT_FILE "scripts/certs/subscriber.cert.der"
-#define SUB_KEY_FILE  "scripts/certs/subscriber.key.der"
 
 /* NodeId dei tipi UAFX (numeric id fisso da nodeset XML) */
 #define FXAC_ID_AUTOMATIONCOMPONENTTYPE  2
@@ -66,6 +64,9 @@ static void stopHandler(int sig) {
     printf("\n[SERVER] Shutdown signal received\n");
     running = false;
 }
+
+
+
 
 static void
 sksPullRequestCallback(UA_Server *server, UA_StatusCode sksPullRequestStatus,
@@ -88,156 +89,6 @@ sksPullRequestCallback(UA_Server *server, UA_StatusCode sksPullRequestStatus,
     }
 }
  
-
-
-/* ═══════════════════════════════════════════════════════════
- * Risolve il namespace index per una URI data
- * ═══════════════════════════════════════════════════════════ */
-static UA_UInt16 resolveNamespaceIndex(UA_Server *server, const char *uri) {
-    UA_Variant nsArrayVar;
-    UA_Variant_init(&nsArrayVar);
-
-    UA_NodeId nsArrayId = UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER_NAMESPACEARRAY);
-    UA_StatusCode rc = UA_Server_readValue(server, nsArrayId, &nsArrayVar);
-    if(rc != UA_STATUSCODE_GOOD || !UA_Variant_hasArrayType(&nsArrayVar, &UA_TYPES[UA_TYPES_STRING])) {
-        UA_Variant_clear(&nsArrayVar);
-        printf("[SERVER] WARNING: could not read NamespaceArray, defaulting ns=1\n");
-        return 1;
-    }
-
-    UA_String *nsArray = (UA_String *)nsArrayVar.data;
-    UA_UInt16 found = 0;
-    for(size_t i = 0; i < nsArrayVar.arrayLength; i++) {
-        UA_String target = UA_STRING((char *)uri);
-        if(UA_String_equal(&nsArray[i], &target)) {
-            found = (UA_UInt16)i;
-            break;
-        }
-    }
-
-    UA_Variant_clear(&nsArrayVar);
-    return found;
-}
-
-/* ═══════════════════════════════════════════════════════════
- * Helper Functions
- * ═══════════════════════════════════════════════════════════ */
-
-static UA_QualifiedName qn(UA_UInt16 ns, const char *name) {
-    return UA_QUALIFIEDNAME(ns, (char *)name);
-}
-
-static UA_LocalizedText lt(const char *text) {
-    return UA_LOCALIZEDTEXT("en-US", (char *)text);
-}
-
-
-static UA_NodeId resolveChildByNameServer(UA_Server *server,
-                                           UA_NodeId parentId,
-                                           const char *name) {
-    UA_BrowseDescription bd;
-    UA_BrowseDescription_init(&bd);
-    bd.nodeId = parentId;
-    bd.browseDirection = UA_BROWSEDIRECTION_FORWARD;
-    bd.referenceTypeId = UA_NODEID_NUMERIC(0, UA_NS0ID_HIERARCHICALREFERENCES);
-    bd.includeSubtypes = true;
-    bd.resultMask = UA_BROWSERESULTMASK_BROWSENAME;
-
-    UA_BrowseResult br = UA_Server_browse(server, 0, &bd);
-    UA_NodeId result = UA_NODEID_NULL;
-
-    for(size_t i = 0; i < br.referencesSize; i++) {
-        UA_ReferenceDescription *ref = &br.references[i];
-        if(ref->browseName.name.length == strlen(name) &&
-           memcmp(ref->browseName.name.data, name, strlen(name)) == 0) {
-            UA_NodeId_copy(&ref->nodeId.nodeId, &result);
-            break;
-        }
-    }
-    UA_BrowseResult_clear(&br);
-    return result;
-}
-
-
-static UA_NodeId addFolder(UA_Server *server, UA_NodeId parent,
-                            UA_UInt16 ns, const char *name) {
-    UA_ObjectAttributes attr = UA_ObjectAttributes_default;
-    attr.displayName = lt(name);
-
-    UA_NodeId newNode = UA_NODEID_NULL;
-    UA_Server_addObjectNode(server, UA_NODEID_NULL, parent,
-        UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES), qn(ns, name),
-        UA_NODEID_NUMERIC(0, UA_NS0ID_FOLDERTYPE), attr, NULL, &newNode);
-
-    return newNode;
-}
-
-/* Aggiunge un oggetto con typeDefinition esplicito (UAFX typed) */
-static UA_NodeId addTypedObject(UA_Server *server, UA_NodeId parent,
-                                UA_UInt16 nsInstance, const char *name,
-                                const char *description,
-                                UA_UInt16 nsType, UA_UInt32 typeId) {
-    UA_ObjectAttributes attr = UA_ObjectAttributes_default;
-    attr.displayName = lt(name);
-    attr.description = lt(description);
-
-    UA_NodeId newNode = UA_NODEID_NULL;
-    UA_Server_addObjectNode(server, UA_NODEID_NULL, parent,
-        UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT), qn(nsInstance, name),
-        UA_NODEID_NUMERIC(nsType, typeId), attr, NULL, &newNode);
-
-    return newNode;
-}
-
-/* Aggiunge un oggetto con BaseObjectType */
-static UA_NodeId addBaseObject(UA_Server *server, UA_NodeId parent,
-                               UA_UInt16 ns, const char *name,
-                               const char *description) {
-    UA_ObjectAttributes attr = UA_ObjectAttributes_default;
-    attr.displayName = lt(name);
-    attr.description = lt(description);
-
-    UA_NodeId newNode = UA_NODEID_NULL;
-    UA_Server_addObjectNode(server, UA_NODEID_NULL, parent,
-        UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT), qn(ns, name),
-        UA_NODEID_NUMERIC(0, UA_NS0ID_BASEOBJECTTYPE), attr, NULL, &newNode);
-
-    return newNode;
-}
-
-static UA_NodeId addStringVariable(UA_Server *server, UA_NodeId parent,
-                                    UA_UInt16 ns, const char *name, const char *value) {
-    UA_VariableAttributes attr = UA_VariableAttributes_default;
-    attr.displayName = lt(name);
-    UA_String val = UA_STRING((char *)value);
-    UA_Variant_setScalar(&attr.value, &val, &UA_TYPES[UA_TYPES_STRING]);
-    attr.dataType = UA_TYPES[UA_TYPES_STRING].typeId;
-    attr.accessLevel = UA_ACCESSLEVELMASK_READ;
-
-    UA_NodeId newNode = UA_NODEID_NULL;
-    UA_Server_addVariableNode(server, UA_NODEID_NULL, parent,
-        UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY), qn(ns, name),
-        UA_NODEID_NUMERIC(0, UA_NS0ID_PROPERTYTYPE), attr, NULL, &newNode);
-
-    return newNode;
-}
-
-static UA_NodeId addUInt32Variable(UA_Server *server, UA_NodeId parent,
-                                    UA_UInt16 ns, const char *name, UA_UInt32 value) {
-    UA_VariableAttributes attr = UA_VariableAttributes_default;
-    attr.displayName = lt(name);
-    UA_Variant_setScalar(&attr.value, &value, &UA_TYPES[UA_TYPES_UINT32]);
-    attr.dataType = UA_TYPES[UA_TYPES_UINT32].typeId;
-    attr.accessLevel = UA_ACCESSLEVELMASK_READ;
-
-    UA_NodeId newNode = UA_NODEID_NULL;
-    UA_Server_addVariableNode(server, UA_NODEID_NULL, parent,
-        UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT), qn(ns, name),
-        UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), attr, NULL, &newNode);
-
-    return newNode;
-}
-
 /* ═══════════════════════════════════════════════════════════
  * Density Variable with Dynamic Callback
  * ═══════════════════════════════════════════════════════════ */
@@ -484,10 +335,11 @@ static void setupSubscriber(UA_Server *server, CliOptions *opts) {
     readerGroupIdent = rgId;
     printf("[SERVER]   + ReaderGroup\n");
     
-    UA_Server_setSksClient(server, rgConfig.securityGroupId,
+    if (opts->sks) {
+        UA_Server_setSksClient(server, rgConfig.securityGroupId,
                         sksClientConfigGlobal, SKS_SERVER_URL,
                         sksPullRequestCallback, NULL);
-
+    }
     /* ─── 3. DataSetReader ────────────────────────────── */
     UA_DataSetReaderConfig dsrConfig;
     memset(&dsrConfig, 0, sizeof(dsrConfig));
@@ -555,7 +407,8 @@ static void setupSubscriber(UA_Server *server, CliOptions *opts) {
 
     UA_Server_enableDataSetReader(server, dsrId);
     UA_Server_enablePubSubConnection(server, connId);
-    //UA_Server_setReaderGroupOperational(server, rgId);
+    if (!opts->sks)
+        UA_Server_setReaderGroupOperational(server, rgId);
 }
 
 
@@ -740,22 +593,23 @@ int main(int argc, char **argv) {
     config->pubSubConfig.securityPoliciesSize = 1;
     UA_PubSubSecurityPolicy_Aes256Ctr(config->pubSubConfig.securityPolicies, config->logging);
 
-    UA_ByteString subCert = loadFile(opts.certificate);
-    UA_ByteString subKey  = loadFile(opts.key);
-    if(subCert.length == 0 || subKey.length == 0) {
-        printf("[ERROR] Cannot load %s / %s — generate them first "
-               "(see tools/certs/create_self-signed.py)\n",
-               SUB_CERT_FILE, SUB_KEY_FILE);
-        UA_Server_delete(server);
-        return EXIT_FAILURE;
-    }
 
-    if (opts.sks)
+
+    if (opts.sks) {
+        UA_ByteString subCert = loadFile(opts.cert);
+        UA_ByteString subKey  = loadFile(opts.key);
+        if(subCert.length == 0 || subKey.length == 0) {
+            printf("[ERROR] Cannot load %s / %s — generate them first "
+                   "(see tools/certs/create_self-signed.py)\n",
+                   opts.cert, opts.key);
+            UA_Server_delete(server);
+            return EXIT_FAILURE;
+        }
         sksClientConfigGlobal = encryptedSksClient(SKS_USERNAME, SKS_PASSWORD, "urn:example:uafx:density-sensor-1", 
-            UA_BYTESTRING_ALLOC(opts.certificate), UA_BYTESTRING_ALLOC(opts.key));
-
-    UA_ByteString_clear(&subCert);
-    UA_ByteString_clear(&subKey);
+            UA_BYTESTRING_ALLOC(opts.cert), UA_BYTESTRING_ALLOC(opts.key));
+        UA_ByteString_clear(&subCert);
+        UA_ByteString_clear(&subKey);
+    }
 
     UA_String_clear(&config->applicationDescription.applicationUri);
     config->applicationDescription.applicationUri =
@@ -822,6 +676,7 @@ int main(int argc, char **argv) {
     UA_ClientConfig cc;
     memset(&cc, 0, sizeof(UA_ClientConfig));
     UA_ClientConfig_setDefault(&cc);
+    cc.securityMode = UA_MESSAGESECURITYMODE_NONE;
 
     UA_String discoveryUrl = UA_STRING(LDS_URL);
 

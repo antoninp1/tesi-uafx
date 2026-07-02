@@ -23,7 +23,10 @@ else:
 
 
 async def main():
+    client = Client(url=SERVER_URL)
     async with Client(url=SERVER_URL) as client:
+        client.set_user("uafx-operator")
+        client.set_password("ChangeThisOperatorPasswordInLab")
         objects = client.get_objects_node()
         fxroot = await objects.get_child(["4:FxRoot"])
         sensor = await fxroot.get_child([NODE_PATH[2]])
