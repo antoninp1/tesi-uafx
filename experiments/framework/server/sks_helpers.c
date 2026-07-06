@@ -29,22 +29,19 @@ loadFile(const char *const path) {
 }
 
 UA_ClientConfig *
-encryptedSksClient(const char *username, const char *password, const char *applicationUri,
-                   UA_ByteString certificate, UA_ByteString privateKey) {
+encryptedSksClient(const char *applicationUri, UA_ByteString certificate, UA_ByteString privateKey) {
     UA_ClientConfig *cc = (UA_ClientConfig *)UA_calloc(1, sizeof(UA_ClientConfig));
     cc->securityMode = UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
     UA_ClientConfig_setDefaultEncryption(cc, certificate, privateKey, NULL, 0, NULL, 0);
     cc->securityPolicyUri = UA_STRING_ALLOC("http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256");
     UA_String_clear(&cc->clientDescription.applicationUri);
     cc->clientDescription.applicationUri = UA_String_fromChars(applicationUri);
- 
-    UA_UserNameIdentityToken *identityToken = UA_UserNameIdentityToken_new();
-    identityToken->userName = UA_STRING_ALLOC(username);
-    identityToken->password = UA_STRING_ALLOC(password);
+
+    UA_X509IdentityToken *x509Token = UA_X509IdentityToken_new();
+    UA_ByteString_copy(&certificate, &x509Token->certificateData);
     UA_ExtensionObject_clear(&cc->userIdentityToken);
     cc->userIdentityToken.encoding = UA_EXTENSIONOBJECT_DECODED;
-    cc->userIdentityToken.content.decoded.type = &UA_TYPES[UA_TYPES_USERNAMEIDENTITYTOKEN];
-    cc->userIdentityToken.content.decoded.data = identityToken;
+    cc->userIdentityToken.content.decoded.type = &UA_TYPES[UA_TYPES_X509IDENTITYTOKEN];
+    cc->userIdentityToken.content.decoded.data = x509Token;
     return cc;
 }
- 

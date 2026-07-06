@@ -46,8 +46,6 @@
 
 #define SKS_SERVER_URL          "opc.tcp://192.168.17.112:4850"
 #define DEMO_SECURITYGROUPNAME  "UafxSecurityGroup"
-#define SKS_USERNAME            "uafx-sks-client"
-#define SKS_PASSWORD            "ChangeThisPasswordInLab"
 
 /* NodeId dei tipi UAFX (numeric id fisso da nodeset XML) */
 #define FXAC_ID_AUTOMATIONCOMPONENTTYPE  2
@@ -540,8 +538,7 @@ int main(int argc, char **argv) {
         UA_Server_delete(server);
         return EXIT_FAILURE;
     }
-    sksClientConfigGlobal = encryptedSksClient(SKS_USERNAME, SKS_PASSWORD, "urn:example:uafx:temperature-sensor-1",
-                                               pubCert, pubKey);
+    sksClientConfigGlobal = encryptedSksClient("urn:example:uafx:temperature-sensor-1", pubCert, pubKey);
     UA_ByteString_clear(&pubCert);
     UA_ByteString_clear(&pubKey);
     }

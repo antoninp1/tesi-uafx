@@ -1,7 +1,7 @@
 import asyncio
 from asyncua import Client
 
-SERVER_URL = "opc.tcp://192.168.17.92:4841"
+SERVER_URL = "opc.tcp://192.168.17.184:4841"
 
 
 async def list_nodes(node, prefix=""):

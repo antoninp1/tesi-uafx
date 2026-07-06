@@ -153,6 +153,27 @@ addUsernamePasswordTokenPolicy(UA_ServerConfig *config) {
     }
 }
 
+static void
+addCertificateTokenPolicy(UA_ServerConfig *config) {
+    for (size_t i=0; i < config->endpointsSize; i++) {
+        UA_EndpointDescription *ep = &config->endpoints[i];
+
+        UA_UserTokenPolicy *newArray = (UA_UserTokenPolicy *)
+            UA_realloc(ep->userIdentityTokens,
+                      (ep->userIdentityTokensSize + 1) * sizeof(UA_UserTokenPolicy));
+        if (!newArray)
+            continue;
+        ep->userIdentityTokens = newArray;
+
+        UA_UserTokenPolicy *utp = &ep->userIdentityTokens[ep->userIdentityTokensSize];
+        UA_UserTokenPolicy_init(utp);
+        utp->tokenType = UA_USERTOKENTYPE_CERTIFICATE;
+        utp->policyId = makeUsernamePolicyId(&ep->securityPolicyUri);
+        ep->userIdentityTokensSize++;
+        UA_String_copy(&ep->securityPolicyUri, &utp->securityPolicyUri);
+    }
+}
+
 /* ─── Only allow encrypted endpoints (drop SecurityMode=None) ─────── */
 static void
 disableUnencrypted(UA_ServerConfig *config) {
@@ -181,17 +202,13 @@ activateSession_sks(UA_Server *server, UA_AccessControl *ac,
                      const UA_NodeId *sessionId,
                      const UA_ExtensionObject *userIdentityToken,
                      void **sessionContext) {
-    if(userIdentityToken->content.decoded.type != &UA_TYPES[UA_TYPES_USERNAMEIDENTITYTOKEN])
+   if (userIdentityToken->content.decoded.type != &UA_TYPES[UA_TYPES_X509IDENTITYTOKEN])
         return UA_STATUSCODE_BADUSERACCESSDENIED;
-
-    UA_UserNameIdentityToken *token =
-        (UA_UserNameIdentityToken *)userIdentityToken->content.decoded.data;
-
-    UA_String expectedUser = UA_STRING(SKS_USERNAME);
-    UA_String expectedPass = UA_STRING(SKS_PASSWORD);
-
-    if(!UA_String_equal(&token->userName, &expectedUser) ||
-       !UA_String_equal(&token->password, &expectedPass))
+    
+    UA_X509IdentityToken *token =
+        (UA_X509IdentityToken *)userIdentityToken->content.decoded.data;
+    
+    if (!UA_ByteString_equal(&token->certificateData, secureChannelRemoteCertificate))
         return UA_STATUSCODE_BADUSERACCESSDENIED;
 
     /* No session context needed: access control on the SecurityGroup
@@ -330,7 +347,7 @@ main(int argc, char **argv) {
 
     disableUnencrypted(&config);
     disableAnonymous(&config);
-    addUsernamePasswordTokenPolicy(&config);
+    addCertificateTokenPolicy(&config);
 
     config.maxSecureChannels = 20;
     config.maxSessions = 20;
