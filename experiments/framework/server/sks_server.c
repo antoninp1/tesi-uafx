@@ -36,9 +36,9 @@
 /* Key lifetime before rollover. Kept short for demo/lab purposes so
  * the rollover mechanism can be observed; lengthen it (e.g. 30-60 min)
  * for real-world use. */
-#define DEMO_KEYLIFETIME_MINUTES 1
-#define DEMO_MAXFUTUREKEYCOUNT 0
-#define DEMO_MAXPASTKEYCOUNT 1
+#define DEMO_KEYLIFETIME_MINUTES 5
+#define DEMO_MAXFUTUREKEYCOUNT 2
+#define DEMO_MAXPASTKEYCOUNT 2
 
 /* Account used by the SKS clients (Publisher/Subscriber) to
  * authenticate against this server. Must match what is configured in

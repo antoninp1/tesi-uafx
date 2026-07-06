@@ -338,7 +338,7 @@ static void setupSubscriber(UA_Server *server, CliOptions *opts) {
     if (opts->sks) {
         UA_Server_setSksClient(server, rgConfig.securityGroupId,
                         sksClientConfigGlobal, SKS_SERVER_URL,
-                        sksPullRequestCallback, NULL);
+                        sksPullRequestCallback, &readerGroupIdent);
     }
     /* ─── 3. DataSetReader ────────────────────────────── */
     UA_DataSetReaderConfig dsrConfig;
@@ -606,7 +606,7 @@ int main(int argc, char **argv) {
             return EXIT_FAILURE;
         }
         sksClientConfigGlobal = encryptedSksClient(SKS_USERNAME, SKS_PASSWORD, "urn:example:uafx:density-sensor-1", 
-            UA_BYTESTRING_ALLOC(opts.cert), UA_BYTESTRING_ALLOC(opts.key));
+            subCert, subKey);
         UA_ByteString_clear(&subCert);
         UA_ByteString_clear(&subKey);
     }

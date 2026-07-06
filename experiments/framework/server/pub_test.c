@@ -328,7 +328,7 @@ static void addWriterGroup(UA_Server *server, void *context) {
     if (optContext->sks) {
         UA_Server_setSksClient(server, writerGroupConfig.securityGroupId,
                         sksClientConfigGlobal, SKS_SERVER_URL,
-                        sksPullRequestCallback, NULL);
+                        sksPullRequestCallback, &writerGroupIdent);
     }
 
 }
@@ -664,8 +664,8 @@ int main(int argc, char **argv) {
         clock_gettime(CLOCK_REALTIME, &next);
         while(running) {
             next.tv_nsec += opts.cycleTime;
-            while(next.tv_nsec >= 1000000000L) {
-                next.tv_nsec -= 1000000000L;
+            while(next.tv_nsec >= opts.cycleTime*1000000L) {
+                next.tv_nsec -= opts.cycleTime*1000000L;
                 next.tv_sec++;
             }
 
