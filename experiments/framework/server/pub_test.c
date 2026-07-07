@@ -529,6 +529,14 @@ int main(int argc, char **argv) {
     
     UA_ServerConfig_setDefaultWithSecurityPolicies(config, 4941, &serverCert, &serverKey, trustList, trustListSize, NULL, 0, NULL, 0);
     
+    /* AccessControl: X.509 certificate authentication + restrict
+     * Method calls to authenticated sessions only. Uses the same
+     * activateSession_sks() already validated on the SKS server --
+     * channel cert must equal user token cert, both verified against
+     * the trustlist above. No anonymous access, no passwords. */
+    config->accessControl.activateSession = activateSession;
+    config->accessControl.getUserExecutableOnObject = getUserExecutableOnObject_app;
+
     UA_String hostname = UA_String_fromChars(SERVER_PUBLIC_URL);
     config->applicationDescription.applicationType = UA_APPLICATIONTYPE_SERVER;
 

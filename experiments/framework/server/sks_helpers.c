@@ -127,7 +127,7 @@ resolveSksUrlFromLds(const char *ldsUrl, const char *sksApplicationUri,
     UA_ByteString cert = loadFile(clientCertPath);
     UA_ByteString key  = loadFile(clientKeyPath);
     if(cert.length == 0 || key.length == 0) {
-        printf("[SKS-RESOLVE] Impossible de charger cert/clé pour la résolution\n");
+        printf("[SKS-RESOLVE] Unable to load cert/key for resolution\n");
         UA_ByteString_clear(&cert);
         UA_ByteString_clear(&key);
         return NULL;
@@ -247,7 +247,7 @@ addCertificateTokenPolicy(UA_ServerConfig *config) {
 
 
 UA_StatusCode
-activateSession_sks(UA_Server *server, UA_AccessControl *ac,
+activateSession(UA_Server *server, UA_AccessControl *ac,
                      const UA_EndpointDescription *endpointDescription,
                      const UA_ByteString *secureChannelRemoteCertificate,
                      const UA_NodeId *sessionId,
@@ -259,6 +259,7 @@ activateSession_sks(UA_Server *server, UA_AccessControl *ac,
     UA_X509IdentityToken *token =
         (UA_X509IdentityToken *)userIdentityToken->content.decoded.data;
     
+    
     if (!UA_ByteString_equal(&token->certificateData, secureChannelRemoteCertificate))
         return UA_STATUSCODE_BADUSERACCESSDENIED;
 
@@ -268,6 +269,18 @@ activateSession_sks(UA_Server *server, UA_AccessControl *ac,
      * NULL so as not to interfere with the lifecycle
      * (closeSession/clear) of the default AccessControl plugin, which
      * manages its own internal structure. */
-    *sessionContext = NULL;
+    *sessionContext = (void *)1; /* non-NULL to indicate success */
     return UA_STATUSCODE_GOOD;
+}
+
+UA_Boolean
+getUserExecutableOnObject_app(UA_Server *server, UA_AccessControl *ac,
+                              const UA_NodeId *sessionId, void *sessionContext,
+                              const UA_NodeId *methodId, void *methodContext,
+                              const UA_NodeId *objectId, void *objectContext) {
+    /* Only allow Method calls from sessions that passed
+     * activateSession_sks (sessionContext != NULL means the
+     * X.509 certificate was verified). Anonymous sessions
+     * (sessionContext == NULL) are denied. */
+    return sessionContext != NULL;
 }

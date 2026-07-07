@@ -53,35 +53,6 @@ static void stopHandler(int sig) {
     running = false;
 }
 
-
-static void
-addUsernamePasswordTokenPolicy(UA_ServerConfig *config) {
-    for(size_t i = 0; i < config->endpointsSize; i++) {
-        UA_EndpointDescription *ep = &config->endpoints[i];
- 
-        UA_UserTokenPolicy *newArray = (UA_UserTokenPolicy *)
-            UA_realloc(ep->userIdentityTokens,
-                      (ep->userIdentityTokensSize + 1) * sizeof(UA_UserTokenPolicy));
-        if(!newArray)
-            continue;
-        ep->userIdentityTokens = newArray;
- 
-        UA_UserTokenPolicy *utp = &ep->userIdentityTokens[ep->userIdentityTokensSize];
-        UA_UserTokenPolicy_init(utp);
-        utp->tokenType = UA_USERTOKENTYPE_USERNAME;
-        utp->policyId = makeUsernamePolicyId(&ep->securityPolicyUri);
-        /* Leave securityPolicyUri empty: per spec, this means "use the
-         * SecureChannel's own security policy" -- works uniformly across
-         * every endpoint regardless of its policy/mode. The framework
-         * already strips this back out on SecurityMode=None endpoints
-         * on its own (see the "Removing a UserTokenPolicy that would
-         * allow the password to be transmitted without encryption"
-         * log line you saw earlier). */
-        ep->userIdentityTokensSize++;
-        UA_String_copy(&ep->securityPolicyUri, &utp->securityPolicyUri);
-    }
-}
-
 /* ─── Only allow encrypted endpoints (drop SecurityMode=None) ─────── */
 static void
 disableUnencrypted(UA_ServerConfig *config) {
@@ -235,7 +206,7 @@ main(int argc, char **argv) {
                                       config.logging);
 
     /* certificate authentication + access control on the SecurityGroup */
-    config.accessControl.activateSession = activateSession_sks;
+    config.accessControl.activateSession = activateSession;
 
     UA_Server *server = UA_Server_newWithConfig(&config);
     if(!server) {

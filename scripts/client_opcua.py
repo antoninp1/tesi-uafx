@@ -12,6 +12,8 @@ async def main():
         private_key="certs/asyncua.key.der",
         mode=ua.MessageSecurityMode.SignAndEncrypt
     )
+    await client.load_private_key("certs/asyncua.key.der")
+    await client.load_client_certificate("certs/asyncua.cert.der")
 
     async with client:
         node = client.get_node("ns=1;i=50001")

@@ -21,9 +21,16 @@ UA_String makeUsernamePolicyId(const UA_String *securityPolicyUri);
 void addCertificateTokenPolicy(UA_ServerConfig *config);
 
 UA_StatusCode
-activateSession_sks(UA_Server *server, UA_AccessControl *ac,
+activateSession(UA_Server *server, UA_AccessControl *ac,
                      const UA_EndpointDescription *endpointDescription,
                      const UA_ByteString *secureChannelRemoteCertificate,
                      const UA_NodeId *sessionId,
                      const UA_ExtensionObject *userIdentityToken,
                      void **sessionContext);
+
+
+UA_Boolean
+getUserExecutableOnObject_app(UA_Server *server, UA_AccessControl *ac,
+                              const UA_NodeId *sessionId, void *sessionContext,
+                              const UA_NodeId *methodId, void *methodContext,
+                              const UA_NodeId *objectId, void *objectContext);
