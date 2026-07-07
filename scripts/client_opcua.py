@@ -1,10 +1,19 @@
 import asyncio
-from asyncua import Client
+from asyncua import Client, ua
+from asyncua.crypto.security_policies import SecurityPolicyBasic256Sha256
 
 async def main():
-    url = "opc.tcp://192.168.17.184:4841"
+    url = "opc.tcp://192.168.17.184:4941"
+    client = Client(url=url)
+    client.application_uri = "urn:example:uafx:asyncua"
+    await client.set_security(
+        SecurityPolicyBasic256Sha256,
+        certificate="certs/asyncua.cert.der",
+        private_key="certs/asyncua.key.der",
+        mode=ua.MessageSecurityMode.SignAndEncrypt
+    )
 
-    async with Client(url=url) as client:
+    async with client:
         node = client.get_node("ns=1;i=50001")
 
         print("[CLIENT] Reading ReceivedTemperature node (ns=1;i=50001)...")

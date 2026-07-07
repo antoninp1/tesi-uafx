@@ -14,8 +14,7 @@ static ExtOption LONG_OPTS[] = {
     {{"rt-core", required_argument, 0, OPT_RT_CORE}, NULL, "Define the CPU core for real-time scheduling"},
     {{"sched-prio", required_argument, 0, OPT_SCHED_PRIO}, NULL, "Define the scheduling priority for real-time tasks"},
     {{"sks", no_argument, 0, OPT_SKS}, NULL, "Enable encryption with SKS server"},
-    {{"cert", required_argument, 0, OPT_CERT}, NULL, "Set the PubSub SKS client certificate"},
-    {{"key", required_argument, 0, OPT_KEY}, NULL, "Set the PubSub SKS client private key"},
+    {{"cert-dir", required_argument, 0, OPT_CERT_DIR}, NULL, "Set the PubSub SKS client certificate"},
     {{"autostart", no_argument, 0, OPT_AUTOSTART}, NULL, "Automatically start the server without waiting for user input"},
     {{"help",    no_argument,       0, OPT_HELP}, NULL, "Display this help message"},
     {{0, 0, 0, 0}, NULL, NULL}
@@ -39,7 +38,7 @@ void printUsage(char *program_name) {
 CliOptions parseArgs(int argc, char **argv) {
     CliOptions opts = { .rt = false, .rtLog = false, .rtCore = NO_RT_CORE, .schedPrio = NO_SCHED_PRIO, .cycleTime = 1000000L, 
         .url = "opc.eth://03-00-00-00-00-03:10.6", .iface = "enp43s0", .autostart = false, 
-        .sks = false, .cert = NULL, .key = NULL };
+        .sks = false, .certDir = "scripts/certs"};
 
     int num_opts = sizeof(LONG_OPTS) / sizeof(ExtOption);
     struct option long_options[num_opts];
@@ -58,8 +57,7 @@ CliOptions parseArgs(int argc, char **argv) {
             case OPT_RT_CORE: opts.rtCore = atoi(optarg); break;
             case OPT_SCHED_PRIO: opts.schedPrio = atoi(optarg); break;
             case OPT_SKS: opts.sks = true; break;
-            case OPT_CERT: opts.cert = strdup(optarg); break;
-            case OPT_KEY: opts.key = strdup(optarg); break;
+            case OPT_CERT_DIR: opts.certDir = strdup(optarg); break;
             case OPT_AUTOSTART: opts.autostart = true; break;
             case OPT_HELP:
                 printUsage(argv[0]);

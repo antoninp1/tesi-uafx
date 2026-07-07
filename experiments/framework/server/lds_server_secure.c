@@ -161,7 +161,8 @@ int main(int argc, char **argv) {
 
     /* ─── mDNS opzionale ─────────────────────────────────────── */
 #ifdef UA_ENABLE_DISCOVERY_MULTICAST
-    config->mdnsEnabled = UA_TRUE;
+    // Disabling mDNS to avoid bad registration
+    config->mdnsEnabled = UA_FALSE;
     UA_String_clear(&config->mdnsConfig.mdnsServerName);
     config->mdnsConfig.mdnsServerName =
         UA_String_fromChars("UAFX-LDS");

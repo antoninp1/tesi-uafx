@@ -13,3 +13,17 @@ void disableAnonymous(UA_ServerConfig *config);
 
 char *resolveSksUrlFromLds(const char *ldsUrl, const char *sksApplicationUri,
                            const char *clientCertPath, const char *clientKeyPath);
+
+char *buildCertPath(const char *certDir, const char *filename);
+
+UA_String makeUsernamePolicyId(const UA_String *securityPolicyUri);
+
+void addCertificateTokenPolicy(UA_ServerConfig *config);
+
+UA_StatusCode
+activateSession_sks(UA_Server *server, UA_AccessControl *ac,
+                     const UA_EndpointDescription *endpointDescription,
+                     const UA_ByteString *secureChannelRemoteCertificate,
+                     const UA_NodeId *sessionId,
+                     const UA_ExtensionObject *userIdentityToken,
+                     void **sessionContext);

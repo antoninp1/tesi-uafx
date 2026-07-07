@@ -44,7 +44,7 @@
 /* ─── Namespace index di FX/AC nel server ─────────────────── */
 #define FXAC_NS_URI   "http://opcfoundation.org/UA/FX/AC/"
 
-#define SKS_SERVER_URL_FALLBACK         "opc.tcp://192.168.17.112:4850"
+#define SKS_SERVER_URL_FALLBACK         "opc.tcp://192.168.17.143:4850"
 #define SKS_APPLICATION_URI     "urn:example:uafx:sks-server"
 #define DEMO_SECURITYGROUPNAME  "UafxSecurityGroup"
 
@@ -54,8 +54,8 @@
 #define FXAC_ID_FUNCTIONALENTITYTYPE     4
 
 #define NS_LOCAL 1
-#define LDS_URL          "opc.tcp://192.168.17.112:4840"
-#define SERVER_PUBLIC_URL "opc.tcp://192.168.17.92:4841"
+#define LDS_URL          "opc.tcp://192.168.17.143:4840"
+#define SERVER_PUBLIC_URL "opc.tcp://edge-up-3:4941"
 
 static UA_NodeId connectionIdent, publishedDataSetIdent, writerGroupIdent,
     dataSetWriterIdent;
@@ -518,7 +518,17 @@ int main(int argc, char **argv) {
     };
 
     config->customDataTypes = &customDataTypesDI;
-    UA_ServerConfig_setMinimal(config, 4841, NULL);
+    
+    size_t trustListSize = 1;
+    UA_ByteString trustList[trustListSize];
+    trustList[0] = loadFile(buildCertPath(opts.certDir, "asyncua.cert.der"));
+    char *serverCertPath = buildCertPath(opts.certDir, "temperature_server.cert.der");
+    char *serverKeyPath  = buildCertPath(opts.certDir, "temperature_server.key.der");
+    UA_ByteString serverCert = loadFile(serverCertPath);
+    UA_ByteString serverKey  = loadFile(serverKeyPath);
+    
+    UA_ServerConfig_setDefaultWithSecurityPolicies(config, 4941, &serverCert, &serverKey, trustList, trustListSize, NULL, 0, NULL, 0);
+    
     UA_String hostname = UA_String_fromChars(SERVER_PUBLIC_URL);
     config->applicationDescription.applicationType = UA_APPLICATIONTYPE_SERVER;
 
@@ -531,12 +541,12 @@ int main(int argc, char **argv) {
     UA_PubSubSecurityPolicy_Aes256Ctr(config->pubSubConfig.securityPolicies,
                                       config->logging);
  
-    UA_ByteString pubCert = loadFile(opts.cert);
-    UA_ByteString pubKey  = loadFile(opts.key);
+    UA_ByteString pubCert = loadFile(buildCertPath(opts.certDir, "publisher.cert.der"));
+    UA_ByteString pubKey  = loadFile(buildCertPath(opts.certDir, "publisher.key.der"));
     if(pubCert.length == 0 || pubKey.length == 0) {
         printf("[ERROR] Cannot load %s / %s — generate them first "
                "(see tools/certs/create_self-signed.py)\n",
-               opts.cert, opts.key);
+               buildCertPath(opts.certDir, "publisher.cert.der"), buildCertPath(opts.certDir, "publisher.key.der"));
         UA_Server_delete(server);
         return EXIT_FAILURE;
     }
@@ -558,7 +568,8 @@ int main(int argc, char **argv) {
     config->applicationDescription.discoveryUrls[0] =
         UA_String_fromChars(SERVER_PUBLIC_URL);
 
-    config->mdnsEnabled = UA_TRUE;
+    config->mdnsEnabled = UA_FALSE;
+    /*
     config->mdnsConfig.mdnsServerName =
         UA_String_fromChars("MioServer");
 
@@ -572,7 +583,7 @@ int main(int argc, char **argv) {
     printf("[SERVER] + mDNS Discovery: ENABLED\n\n");
 #else
     printf("[SERVER] mDNS Discovery: DISABLED\n\n");
-#endif
+#endif*/
 
     /* ─── Carica i tipi UAFX dal nodeset generato ────────────── */
     printf("[SERVER] Loading UAFX nodesets...\n");
@@ -605,7 +616,7 @@ int main(int argc, char **argv) {
         addPubSubConnection(server, &transportProfile, &networkAddressUrl);
         addPublishedDataSet(server);
         addDataSetField(server);
-        sksServerUrl = resolveSksUrlFromLds(LDS_URL, SKS_APPLICATION_URI, opts.cert, opts.key);
+        sksServerUrl = resolveSksUrlFromLds(LDS_URL, SKS_APPLICATION_URI, buildCertPath(opts.certDir, "publisher.cert.der"), buildCertPath(opts.certDir, "publisher.key.der"));
         if (sksServerUrl) {
             printf("[INFO] SKS server URL found in LDS: %s\n", sksServerUrl);
         } else {
@@ -625,8 +636,8 @@ int main(int argc, char **argv) {
     UA_StatusCode rc = registerToLdsSecurely(
         server, 
         LDS_URL, 
-        opts.cert, 
-        opts.key, 
+        buildCertPath(opts.certDir, "publisher.cert.der"), 
+        buildCertPath(opts.certDir, "publisher.key.der"), 
         "urn:example:uafx:temperature-sensor-1"
     );
     if(rc != UA_STATUSCODE_GOOD) {

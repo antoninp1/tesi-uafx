@@ -22,8 +22,7 @@ typedef struct {
     char* iface;
     UA_Boolean autostart;
     UA_Boolean sks;
-    char * cert;
-    char * key;
+    char * certDir;
 } CliOptions;
 
 enum {
@@ -36,8 +35,7 @@ enum {
     OPT_RT_CORE,
     OPT_SCHED_PRIO,
     OPT_SKS,
-    OPT_CERT,
-    OPT_KEY,
+    OPT_CERT_DIR,
     OPT_AUTOSTART
 };
 

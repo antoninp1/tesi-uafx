@@ -181,3 +181,93 @@ resolveSksUrlFromLds(const char *ldsUrl, const char *sksApplicationUri,
     UA_Client_delete(client);
     return result;
 }
+
+char *
+buildCertPath(const char *certDir, const char *filename) {
+    if(!certDir || !filename)
+        return NULL;
+
+    size_t dirLen = strlen(certDir);
+    UA_Boolean needsSlash = (dirLen > 0 && certDir[dirLen - 1] != '/');
+    size_t totalLen = dirLen + (needsSlash ? 1 : 0) + strlen(filename) + 1;
+
+    char *path = (char *)malloc(totalLen);
+    if(!path)
+        return NULL;
+
+    int written = snprintf(path, totalLen, "%s%s%s",
+                           certDir, needsSlash ? "/" : "", filename);
+    if(written < 0 || (size_t)written >= totalLen) {
+        free(path);
+        return NULL;
+    }
+    return path;
+}
+
+UA_String
+makeUsernamePolicyId(const UA_String *securityPolicyUri) {
+        UA_Byte *hash = NULL;
+    for(UA_Byte *b = securityPolicyUri->data + securityPolicyUri->length - 1;
+        b >= securityPolicyUri->data; b--) {
+        if(*b == '#') { hash = b; break; }
+    }
+    const char *prefix = "username-policy";
+    size_t prefixLen = strlen(prefix);
+    size_t postfixLen = hash ?
+        (size_t)(securityPolicyUri->data + securityPolicyUri->length - hash) : 0;
+    UA_String policyId;
+    policyId.length = prefixLen + postfixLen;
+    policyId.data = (UA_Byte *)UA_malloc(policyId.length);
+    memcpy(policyId.data, prefix, prefixLen);
+    if(hash)
+        memcpy(policyId.data + prefixLen, hash, postfixLen);
+    return policyId;   
+}
+
+void
+addCertificateTokenPolicy(UA_ServerConfig *config) {
+    for (size_t i=0; i < config->endpointsSize; i++) {
+        UA_EndpointDescription *ep = &config->endpoints[i];
+
+        UA_UserTokenPolicy *newArray = (UA_UserTokenPolicy *)
+            UA_realloc(ep->userIdentityTokens,
+                      (ep->userIdentityTokensSize + 1) * sizeof(UA_UserTokenPolicy));
+        if (!newArray)
+            continue;
+        ep->userIdentityTokens = newArray;
+
+        UA_UserTokenPolicy *utp = &ep->userIdentityTokens[ep->userIdentityTokensSize];
+        UA_UserTokenPolicy_init(utp);
+        utp->tokenType = UA_USERTOKENTYPE_CERTIFICATE;
+        utp->policyId = makeUsernamePolicyId(&ep->securityPolicyUri);
+        ep->userIdentityTokensSize++;
+        UA_String_copy(&ep->securityPolicyUri, &utp->securityPolicyUri);
+    }
+}
+
+
+UA_StatusCode
+activateSession_sks(UA_Server *server, UA_AccessControl *ac,
+                     const UA_EndpointDescription *endpointDescription,
+                     const UA_ByteString *secureChannelRemoteCertificate,
+                     const UA_NodeId *sessionId,
+                     const UA_ExtensionObject *userIdentityToken,
+                     void **sessionContext) {
+   if (userIdentityToken->content.decoded.type != &UA_TYPES[UA_TYPES_X509IDENTITYTOKEN])
+        return UA_STATUSCODE_BADUSERACCESSDENIED;
+    
+    UA_X509IdentityToken *token =
+        (UA_X509IdentityToken *)userIdentityToken->content.decoded.data;
+    
+    if (!UA_ByteString_equal(&token->certificateData, secureChannelRemoteCertificate))
+        return UA_STATUSCODE_BADUSERACCESSDENIED;
+
+    /* No session context needed: access control on the SecurityGroup
+     * is done via the node context (see getUserExecutableOnObject_sks
+     * below), not via the session context. We leave sessionContext as
+     * NULL so as not to interfere with the lifecycle
+     * (closeSession/clear) of the default AccessControl plugin, which
+     * manages its own internal structure. */
+    *sessionContext = NULL;
+    return UA_STATUSCODE_GOOD;
+}
