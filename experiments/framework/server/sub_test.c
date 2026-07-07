@@ -42,7 +42,8 @@
 /* ─── Namespace index di FX/AC nel server ─────────────────── */
 #define FXAC_NS_URI   "http://opcfoundation.org/UA/FX/AC/"
 
-#define SKS_SERVER_URL          "opc.tcp://192.168.17.112:4850"
+#define SKS_SERVER_URL_FALLBACK          "opc.tcp://192.168.17.112:4850"
+#define SKS_APPLICATION_URI     "urn:example:uafx:sks-server"
 #define DEMO_SECURITYGROUPNAME  "UafxSecurityGroup"
 
 /* NodeId dei tipi UAFX (numeric id fisso da nodeset XML) */
@@ -57,6 +58,7 @@
 static volatile UA_Boolean running = true;
 static UA_NodeId readerGroupIdent;
 static UA_ClientConfig *sksClientConfigGlobal = NULL;
+static char *sksServerUrl = NULL;
 
 static void stopHandler(int sig) {
     printf("\n[SERVER] Shutdown signal received\n");
@@ -71,10 +73,7 @@ sksPullRequestCallback(UA_Server *server, UA_StatusCode sksPullRequestStatus,
                        void *context) {
     UA_PubSubState state = UA_PUBSUBSTATE_OPERATIONAL;
     UA_Server_getReaderGroupState(server, readerGroupIdent, &state);
-    if(sksPullRequestStatus == UA_STATUSCODE_GOOD) { //&& state == UA_PUBSUBSTATE_PREOPERATIONAL) {
-        /*
-        UA_Server_setReaderGroupActivateKey(server, readerGroupIdent);
-        printf("[SERVER] SKS: encryption key activated for ReaderGroup\n");*/
+    if(sksPullRequestStatus == UA_STATUSCODE_GOOD) {
         UA_StatusCode rcKey = UA_Server_setReaderGroupActivateKey(server, readerGroupIdent);
         printf("[SERVER] SKS: encryption key activated for ReaderGroup "
            "(activateKey status: %s)\n", UA_StatusCode_name(rcKey));
@@ -334,8 +333,15 @@ static void setupSubscriber(UA_Server *server, CliOptions *opts) {
     printf("[SERVER]   + ReaderGroup\n");
     
     if (opts->sks) {
+        sksServerUrl = resolveSksUrlFromLds(LDS_URL, SKS_APPLICATION_URI, opts->cert, opts->key);
+        if (sksServerUrl) {
+            printf("[INFO] SKS server URL found in LDS: %s\n", sksServerUrl);
+        } else {
+            printf("[WARNING] SKS server URL not found in LDS, using fallback: %s\n", SKS_SERVER_URL_FALLBACK);
+            sksServerUrl = (char *)SKS_SERVER_URL_FALLBACK;
+        }
         UA_Server_setSksClient(server, rgConfig.securityGroupId,
-                        sksClientConfigGlobal, SKS_SERVER_URL,
+                        sksClientConfigGlobal, sksServerUrl,
                         sksPullRequestCallback, &readerGroupIdent);
     }
     /* ─── 3. DataSetReader ────────────────────────────── */
@@ -670,19 +676,17 @@ int main(int argc, char **argv) {
 
 
     /* ─── Registrazione all'LDS ──────────────────────────────── */
-    UA_ClientConfig cc;
-    memset(&cc, 0, sizeof(UA_ClientConfig));
-    UA_ClientConfig_setDefault(&cc);
-    cc.securityMode = UA_MESSAGESECURITYMODE_NONE;
-
-    UA_String discoveryUrl = UA_STRING(LDS_URL);
-
-    UA_StatusCode retval_lds = UA_Server_registerDiscovery(server, &cc, discoveryUrl, UA_STRING_NULL);
-    if(retval_lds != UA_STATUSCODE_GOOD) {
-        printf("[WARNING] LDS registration failed: %s\n", UA_StatusCode_name(retval_lds));
-    } else {
-        printf("[SERVER] + LDS registration OK\n");
+    UA_StatusCode rc = registerToLdsSecurely(
+        server, 
+        LDS_URL, 
+        opts.cert, 
+        opts.key, 
+        "urn:example:uafx:density-sensor-1"
+    );
+    if(rc != UA_STATUSCODE_GOOD) {
+        printf("[WARNING] Shared LDS registration init failed: %s\n", UA_StatusCode_name(rc));
     }
+
 
     printf("\n========================================================\n");
     printf("  SERVER RUNNING on %s\n", SERVER_PUBLIC_URL);

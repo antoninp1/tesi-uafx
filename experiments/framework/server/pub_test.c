@@ -44,7 +44,8 @@
 /* ─── Namespace index di FX/AC nel server ─────────────────── */
 #define FXAC_NS_URI   "http://opcfoundation.org/UA/FX/AC/"
 
-#define SKS_SERVER_URL          "opc.tcp://192.168.17.112:4850"
+#define SKS_SERVER_URL_FALLBACK         "opc.tcp://192.168.17.112:4850"
+#define SKS_APPLICATION_URI     "urn:example:uafx:sks-server"
 #define DEMO_SECURITYGROUPNAME  "UafxSecurityGroup"
 
 /* NodeId dei tipi UAFX (numeric id fisso da nodeset XML) */
@@ -63,6 +64,7 @@ static UA_NetworkAddressUrlDataType networkAddressUrl;
 static volatile UA_Boolean running = true;
 static UA_NodeId temperatureNodeId = {0};
 static UA_ClientConfig *sksClientConfigGlobal = NULL;
+static char *sksServerUrl = NULL;
 //static CliOptions opts;
 
 static void stopHandler(int sig) {
@@ -76,7 +78,7 @@ sksPullRequestCallback(UA_Server *server, UA_StatusCode sksPullRequestStatus,
     UA_NodeId writerGroupIdent = *(UA_NodeId *)context;
     UA_PubSubState state = UA_PUBSUBSTATE_OPERATIONAL;
     UA_Server_getWriterGroupState(server, writerGroupIdent, &state);
-    if(sksPullRequestStatus == UA_STATUSCODE_GOOD) { // && state == UA_PUBSUBSTATE_PREOPERATIONAL) {
+    if(sksPullRequestStatus == UA_STATUSCODE_GOOD) {
         UA_Server_setWriterGroupActivateKey(server, writerGroupIdent);
         printf("[SERVER] SKS: encryption key activated for WriterGroup\n");
     } else if(sksPullRequestStatus != UA_STATUSCODE_GOOD) {
@@ -325,7 +327,7 @@ static void addWriterGroup(UA_Server *server, void *context) {
 
     if (optContext->sks) {
         UA_Server_setSksClient(server, writerGroupConfig.securityGroupId,
-                        sksClientConfigGlobal, SKS_SERVER_URL,
+                        sksClientConfigGlobal, sksServerUrl,
                         sksPullRequestCallback, &writerGroupIdent);
     }
 
@@ -603,6 +605,13 @@ int main(int argc, char **argv) {
         addPubSubConnection(server, &transportProfile, &networkAddressUrl);
         addPublishedDataSet(server);
         addDataSetField(server);
+        sksServerUrl = resolveSksUrlFromLds(LDS_URL, SKS_APPLICATION_URI, opts.cert, opts.key);
+        if (sksServerUrl) {
+            printf("[INFO] SKS server URL found in LDS: %s\n", sksServerUrl);
+        } else {
+            printf("[WARNING] SKS server URL not found in LDS, using fallback: %s\n", SKS_SERVER_URL_FALLBACK);
+            sksServerUrl = (char *)SKS_SERVER_URL_FALLBACK;
+        }
         addWriterGroup(server, &opts);
         addDataSetWriter(server);
 
@@ -613,18 +622,15 @@ int main(int argc, char **argv) {
     }
 
     /* ─── Registrazione all'LDS ──────────────────────────────── */
-    UA_ClientConfig cc;
-    memset(&cc, 0, sizeof(UA_ClientConfig));
-    UA_ClientConfig_setDefault(&cc);
-    cc.securityMode = UA_MESSAGESECURITYMODE_NONE;
-
-    UA_String discoveryUrl = UA_STRING(LDS_URL);
-
-    UA_StatusCode retval_lds = UA_Server_registerDiscovery(server, &cc, discoveryUrl, UA_STRING_NULL);
-    if(retval_lds != UA_STATUSCODE_GOOD) {
-        printf("[WARNING] LDS registration failed: %s\n", UA_StatusCode_name(retval_lds));
-    } else {
-        printf("[SERVER] + LDS registration OK\n");
+    UA_StatusCode rc = registerToLdsSecurely(
+        server, 
+        LDS_URL, 
+        opts.cert, 
+        opts.key, 
+        "urn:example:uafx:temperature-sensor-1"
+    );
+    if(rc != UA_STATUSCODE_GOOD) {
+        printf("[WARNING] Shared LDS registration init failed: %s\n", UA_StatusCode_name(rc));
     }
 
     printf("\n========================================================\n");

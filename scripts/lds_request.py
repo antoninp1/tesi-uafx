@@ -1,16 +1,25 @@
 import asyncio
 from asyncua import Client, ua
+from asyncua.crypto.security_policies import SecurityPolicyBasic256Sha256
 
 LDS_URL = "opc.tcp://192.168.17.112:4840"
 
 async def main():
-    async with Client(url=LDS_URL) as client:
+    client = Client(url=LDS_URL)
+    client.application_uri = "urn:example:uafx:asyncua"
+    await client.set_security(
+        SecurityPolicyBasic256Sha256,
+        certificate="certs/asyncua.cert.der",
+        private_key="certs/asyncua.key.der",
+        mode=ua.MessageSecurityMode.SignAndEncrypt
+    )
+    async with client:
         params = ua.FindServersParameters()
-        params.EndpointUrl = ""          # vide -> pas de mirroring
+        params.EndpointUrl = ""
         params.ServerUris = []
         servers = await client.uaclient.find_servers(params)
 
-        print(f"=== {len(servers)} serveur(s) enregistré(s) ===")
+        print(f"=== {len(servers)} server(s) registered ===")
         for s in servers:
             print(f"- {s.ApplicationName.Text} ({s.ApplicationUri})")
             print(f"    DiscoveryUrls: {s.DiscoveryUrls}")

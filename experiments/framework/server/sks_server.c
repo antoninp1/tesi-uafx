@@ -24,6 +24,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "sks_helpers.h"
+
 #define MINUTE_SECONDS 60
 #define MILLI_SECONDS 1000
 #define MAX_OPERATION_LIMIT 10000
@@ -46,64 +48,10 @@
 #define SKS_USERNAME "uafx-sks-client"
 #define SKS_PASSWORD "ChangeThisPasswordInLab"
 
-/* ─── File loading (cert/key DER) ────────────────────────────────── */
-static UA_ByteString
-loadFile(const char *const path) {
-    UA_ByteString fileContents = UA_STRING_NULL;
+#define LDS_URL "opc.tcp://192.168.17.112:4840"
+#define LDS_REREGISTER_INTERVAL_MS 30000.0
 
-    FILE *fp = fopen(path, "rb");
-    if(!fp) {
-        fprintf(stderr, "[SKS] Cannot open file %s\n", path);
-        return fileContents;
-    }
-
-    if(fseek(fp, 0, SEEK_END) != 0) {
-        fclose(fp);
-        return fileContents;
-    }
-    long length = ftell(fp);
-    if(length < 0) {
-        fclose(fp);
-        return fileContents;
-    }
-
-    fileContents.length = (size_t)length;
-    fileContents.data = (UA_Byte *)UA_malloc(fileContents.length);
-    if(fileContents.data) {
-        fseek(fp, 0, SEEK_SET);
-        size_t read = fread(fileContents.data, 1, fileContents.length, fp);
-        if(read != fileContents.length)
-            UA_ByteString_clear(&fileContents);
-    } else {
-        fileContents.length = 0;
-    }
-    fclose(fp);
-    return fileContents;
-}
-
-/* ─── Only allow authenticated connections (no anonymous access) ──── */
-static void
-disableAnonymous(UA_ServerConfig *config) {
-    for(size_t i = 0; i < config->endpointsSize; i++) {
-        UA_EndpointDescription *ep = &config->endpoints[i];
-        for(size_t j = 0; j < ep->userIdentityTokensSize; j++) {
-            UA_UserTokenPolicy *utp = &ep->userIdentityTokens[j];
-            if(utp->tokenType != UA_USERTOKENTYPE_ANONYMOUS)
-                continue;
-            UA_UserTokenPolicy_clear(utp);
-            if(j + 1 < ep->userIdentityTokensSize) {
-                ep->userIdentityTokens[j] =
-                    ep->userIdentityTokens[ep->userIdentityTokensSize - 1];
-                j--;
-            }
-            ep->userIdentityTokensSize--;
-        }
-        if(ep->userIdentityTokensSize == 0) {
-            UA_free(ep->userIdentityTokens);
-            ep->userIdentityTokens = NULL;
-        }
-    }
-}
+static volatile UA_Boolean running = true;
 
 static UA_String
 makeUsernamePolicyId(const UA_String *securityPolicyUri) {
@@ -279,6 +227,7 @@ main(int argc, char **argv) {
 
     UA_ByteString certificate = loadFile(argv[1]);
     UA_ByteString privateKey = loadFile(argv[2]);
+
     if(certificate.length == 0 || privateKey.length == 0) {
         UA_LOG_FATAL(UA_Log_Stdout, UA_LOGCATEGORY_SERVER,
                      "Unable to load server certificate/key");
@@ -330,6 +279,7 @@ main(int argc, char **argv) {
         trustList, trustListSize,
         NULL, 0,   /* issuerList */
         NULL, 0);  /* revocationList */
+    printf("abc");
     if(res != UA_STATUSCODE_GOOD) {
         UA_LOG_FATAL(UA_Log_Stdout, UA_LOGCATEGORY_SERVER,
                      "ServerConfig setup failed: %s", UA_StatusCode_name(res));
@@ -345,8 +295,6 @@ main(int argc, char **argv) {
     config.applicationDescription.applicationName =
         UA_LOCALIZEDTEXT_ALLOC("en-US", "UAFX Security Key Service");
 
-    disableUnencrypted(&config);
-    disableAnonymous(&config);
     addCertificateTokenPolicy(&config);
 
     config.maxSecureChannels = 20;
@@ -385,8 +333,25 @@ main(int argc, char **argv) {
                 port, DEMO_SECURITYGROUPNAME, DEMO_KEYLIFETIME_MINUTES);
 
     UA_Server_enableAllPubSubComponents(server);
-    UA_StatusCode retval = UA_Server_runUntilInterrupt(server);
 
+    UA_StatusCode retval = UA_Server_run_startup(server);
+    if(retval != UA_STATUSCODE_GOOD) {
+        UA_LOG_FATAL(UA_Log_Stdout, UA_LOGCATEGORY_SERVER,
+                     "run_startup failed: %s", UA_StatusCode_name(retval));
+        UA_Server_delete(server);
+        return EXIT_FAILURE;
+    }
+
+    disableUnencrypted(&config);
+    disableAnonymous(&config);
+    
+    registerToLdsSecurely(server, LDS_URL, argv[1], argv[2], "urn:example:uafx:sks-server");
+
+    while (running)
+        UA_Server_run_iterate(server, true);
+    //UA_StatusCode retval = UA_Server_runUntilInterrupt(server);
+
+    retval = UA_Server_run_shutdown(server);
     UA_Server_delete(server);
     UA_ByteString_clear(&certificate);
     UA_ByteString_clear(&privateKey);
