@@ -43,12 +43,6 @@
 #define DEMO_MAXFUTUREKEYCOUNT 2
 #define DEMO_MAXPASTKEYCOUNT 2
 
-/* Account used by the SKS clients (Publisher/Subscriber) to
- * authenticate against this server. Must match what is configured in
- * pub_test.c / sub_test.c (encryptedSksClient()). */
-#define SKS_USERNAME "uafx-sks-client"
-#define SKS_PASSWORD "ChangeThisPasswordInLab"
-
 #define LDS_URL "opc.tcp://192.168.17.143:4840"
 #define LDS_REREGISTER_INTERVAL_MS 30000.0
 
@@ -108,18 +102,6 @@ disableUnencrypted(UA_ServerConfig *config) {
     }
 }
 
-/* Checks that only the expected user can call GetSecurityKeys on this
- * SecurityGroup (the nodeContext is set by addSecurityGroup below). */
-static UA_Boolean
-getUserExecutableOnObject_sks(UA_Server *server, UA_AccessControl *ac,
-                              const UA_NodeId *sessionId, void *sessionContext,
-                              const UA_NodeId *methodId, void *methodContext,
-                              const UA_NodeId *objectId, void *objectContext) {
-    if(!objectContext)
-        return true; /* no restriction set on this object */
-    const char *allowedUser = (const char *)objectContext;
-    return strcmp(allowedUser, SKS_USERNAME) == 0;
-}
 
 static void
 addSecurityGroup(UA_Server *server, UA_NodeId *outNodeId) {
@@ -139,9 +121,6 @@ addSecurityGroup(UA_Server *server, UA_NodeId *outNodeId) {
                      "Failed to add SecurityGroup: %s", UA_StatusCode_name(rc));
         exit(EXIT_FAILURE);
     }
-
-    /* Restrict access to the SecurityGroup to SKS_USERNAME only */
-    UA_Server_setNodeContext(server, *outNodeId, (void *)SKS_USERNAME);
 }
 
 static void
@@ -255,9 +234,8 @@ main(int argc, char **argv) {
     UA_PubSubSecurityPolicy_Aes256Ctr(config.pubSubConfig.securityPolicies,
                                       config.logging);
 
-    /* Username/password authentication + access control on the SecurityGroup */
+    /* certificate authentication + access control on the SecurityGroup */
     config.accessControl.activateSession = activateSession_sks;
-    config.accessControl.getUserExecutableOnObject = getUserExecutableOnObject_sks;
 
     UA_Server *server = UA_Server_newWithConfig(&config);
     if(!server) {
