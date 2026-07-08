@@ -1,0 +1,88 @@
+diff --git a/src/pubsub/ua_pubsub_internal.h b/src/pubsub/ua_pubsub_internal.h
+index 259626bc4..f56205b9a 100644
+--- a/src/pubsub/ua_pubsub_internal.h
++++ b/src/pubsub/ua_pubsub_internal.h
+@@ -26,7 +26,7 @@
+ /**
+  * PubSub State Machine
+  * --------------------
+- * 
++ *
+  * The following table described the behaviour of components expected during
+  * state changes and also the integration which is expected between the
+  * components.
+@@ -229,7 +229,7 @@ typedef struct UA_PubSubConnection {
+     UA_Boolean json; /* Extracted from the TransportProfileUrl */
+ 
+     /* Channels belonging to the PubSubConnection. Send channels belong to
+-     * WriterGroups, recv channels belong to ReaderGroups. We only open channels 
++     * WriterGroups, recv channels belong to ReaderGroups. We only open channels
+      * if there is at least one WriterGroup/ReaderGroup respectively.
+      *
+      * Some channels belong exclusively to just one WriterGroup/ReaderGroup that
+@@ -435,6 +435,10 @@ struct UA_DataSetReader {
+ 
+     /* MessageReceiveTimeout handling */
+     UA_UInt64 msgRcvTimeoutTimerId;
++
++    /* Anti-replay: last accepted DataSetMessage sequenceNumber.
++     * Zero means not yet initialized (first message always accepted). */
++    UA_UInt16 lastSequenceNumber;
+ };
+ 
+ UA_DataSetReader *
+@@ -487,7 +491,7 @@ struct UA_ReaderGroup {
+ 
+     UA_Boolean hasReceived; /* Received a message since the last _connect */
+ 
+-    /* The ConnectionManager pointer is stored in the Connection. The channels 
++    /* The ConnectionManager pointer is stored in the Connection. The channels
+      * are either stored here or in the Connection, but never both. */
+     UA_PubSubConnection *linkedConnection;
+     uintptr_t recvChannels[UA_PUBSUB_MAXCHANNELS];
+diff --git a/src/pubsub/ua_pubsub_reader.c b/src/pubsub/ua_pubsub_reader.c
+index 0e20ce8b2..3ed9b2460 100644
+--- a/src/pubsub/ua_pubsub_reader.c
++++ b/src/pubsub/ua_pubsub_reader.c
+@@ -525,7 +525,7 @@ UA_DataSetReader_setPubSubState(UA_PubSubManager *psm, UA_DataSetReader *dsr,
+         server->config.pubSubConfig.
+             stateChangeCallback(server, dsr->head.identifier,
+                                 dsr->head.state, errorReason);
+-                                
++
+     return res;
+ }
+ 
+@@ -546,7 +546,7 @@ DataSetReader_createTargetVariables(UA_PubSubManager *psm, UA_DataSetReader *dsr
+ 
+     UA_TargetVariablesDataType newVars;
+     UA_TargetVariablesDataType tmp = {tvsSize, (UA_FieldTargetDataType*)(uintptr_t)tvs};
+-    UA_StatusCode res = UA_TargetVariablesDataType_copy(&tmp, &newVars);   
++    UA_StatusCode res = UA_TargetVariablesDataType_copy(&tmp, &newVars);
+     if(res != UA_STATUSCODE_GOOD)
+         return res;
+ 
+@@ -615,6 +615,23 @@ UA_DataSetReader_process(UA_PubSubManager *psm, UA_DataSetReader *dsr,
+                               "DataSetMessage is discarded: Only keyframes are supported");
+         return;
+     }
++    /* Anti-replay: reject messages whose sequenceNumber is not strictly
++     * greater than the last accepted one. uint16 wraparound is handled
++     * correctly by modular subtraction: if seq <= lastSequenceNumber,
++     * the difference wraps to a value >= 0x8000. */
++    if(msg->header.dataSetMessageSequenceNrEnabled) {
++        UA_UInt16 seq = msg->header.dataSetMessageSequenceNr;
++        if(dsr->lastSequenceNumber != 0 &&
++           (UA_UInt16)(seq - dsr->lastSequenceNumber) >= 0x8000) {
++            UA_LOG_WARNING_PUBSUB(psm->logging, dsr,
++                                  "DataSetMessage discarded: sequenceNumber %u "
++                                  "is not greater than last accepted %u "
++                                  "(possible replay attack)",
++                                  seq, dsr->lastSequenceNumber);
++            return;
++        }
++        dsr->lastSequenceNumber = seq;
++    }
+ 
+     /* Configure / Update the timeout callback */
+     if(dsr->config.messageReceiveTimeout > 0.0) {
