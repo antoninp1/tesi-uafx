@@ -318,7 +318,8 @@ static void addWriterGroup(UA_Server *server, void *context) {
         (UA_UadpNetworkMessageContentMask)(UA_UADPNETWORKMESSAGECONTENTMASK_PUBLISHERID |
                                            UA_UADPNETWORKMESSAGECONTENTMASK_GROUPHEADER |
                                            UA_UADPNETWORKMESSAGECONTENTMASK_WRITERGROUPID |
-                                           UA_UADPNETWORKMESSAGECONTENTMASK_PAYLOADHEADER);
+                                           UA_UADPNETWORKMESSAGECONTENTMASK_PAYLOADHEADER |
+                                           UA_UADPNETWORKMESSAGECONTENTMASK_SEQUENCENUMBER);
 
     UA_ExtensionObject_setValue(&writerGroupConfig.messageSettings, &writerGroupMessage,
                                 &UA_TYPES[UA_TYPES_UADPWRITERGROUPMESSAGEDATATYPE]);
@@ -343,6 +344,17 @@ addDataSetWriter(UA_Server *server) {
     dataSetWriterConfig.name = UA_STRING("Demo DataSetWriter");
     dataSetWriterConfig.dataSetWriterId = 62541;
     dataSetWriterConfig.keyFrameCount = 10;
+
+    /* Enable DataSetMessage sequenceNumber so the subscriber can detect
+     * replayed messages (anti-replay check in ua_pubsub_reader.c). */
+    UA_UadpDataSetWriterMessageDataType writerMessageSettings;
+    UA_UadpDataSetWriterMessageDataType_init(&writerMessageSettings);
+    writerMessageSettings.dataSetMessageContentMask =
+        UA_UADPDATASETMESSAGECONTENTMASK_SEQUENCENUMBER;
+    UA_ExtensionObject_setValue(&dataSetWriterConfig.messageSettings,
+                                &writerMessageSettings,
+                                &UA_TYPES[UA_TYPES_UADPDATASETWRITERMESSAGEDATATYPE]);
+
     UA_Server_addDataSetWriter(server, writerGroupIdent, publishedDataSetIdent,
                                &dataSetWriterConfig, &dataSetWriterIdent);
 
@@ -518,7 +530,7 @@ int main(int argc, char **argv) {
     };
 
     config->customDataTypes = &customDataTypesDI;
-    
+
     size_t trustListSize = 1;
     UA_ByteString trustList[trustListSize];
     trustList[0] = loadFile(buildCertPath(opts.certDir, "asyncua.cert.der"));
@@ -526,9 +538,9 @@ int main(int argc, char **argv) {
     char *serverKeyPath  = buildCertPath(opts.certDir, "temperature_server.key.der");
     UA_ByteString serverCert = loadFile(serverCertPath);
     UA_ByteString serverKey  = loadFile(serverKeyPath);
-    
+
     UA_ServerConfig_setDefaultWithSecurityPolicies(config, 4941, &serverCert, &serverKey, trustList, trustListSize, NULL, 0, NULL, 0);
-    
+
     /* AccessControl: X.509 certificate authentication + restrict
      * Method calls to authenticated sessions only. Uses the same
      * activateSession_sks() already validated on the SKS server --
@@ -548,7 +560,7 @@ int main(int argc, char **argv) {
     config->pubSubConfig.securityPoliciesSize = 1;
     UA_PubSubSecurityPolicy_Aes256Ctr(config->pubSubConfig.securityPolicies,
                                       config->logging);
- 
+
     UA_ByteString pubCert = loadFile(buildCertPath(opts.certDir, "publisher.cert.der"));
     UA_ByteString pubKey  = loadFile(buildCertPath(opts.certDir, "publisher.key.der"));
     if(pubCert.length == 0 || pubKey.length == 0) {
@@ -642,10 +654,10 @@ int main(int argc, char **argv) {
 
     /* ─── Registrazione all'LDS ──────────────────────────────── */
     UA_StatusCode rc = registerToLdsSecurely(
-        server, 
-        LDS_URL, 
-        buildCertPath(opts.certDir, "publisher.cert.der"), 
-        buildCertPath(opts.certDir, "publisher.key.der"), 
+        server,
+        LDS_URL,
+        buildCertPath(opts.certDir, "publisher.cert.der"),
+        buildCertPath(opts.certDir, "publisher.key.der"),
         "urn:example:uafx:temperature-sensor-1"
     );
     if(rc != UA_STATUSCODE_GOOD) {
@@ -677,7 +689,7 @@ int main(int argc, char **argv) {
     /* ─── Loop principale ────────────────────────────────────── */
     if (opts.rtCore != NO_RT_CORE)
         setupCpuAffinity(opts.rtCore);
-    
+
     if (opts.schedPrio != NO_SCHED_PRIO)
         setupSchedulePriority(opts.schedPrio);
 

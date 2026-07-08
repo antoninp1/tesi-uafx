@@ -20,14 +20,14 @@ async def main():
 
         print("[CLIENT] Reading ReceivedTemperature node (ns=1;i=50001)...")
 
-        for i in range(10):
+        for i in range(100):
             try:
                 value = await node.read_value()
                 print(f"[{i+1}] Temperature: {value}")
             except Exception as e:
                 print(f"[ERROR] {e}")
 
-            await asyncio.sleep(1)
+            await asyncio.sleep(3)
 
 if __name__ == "__main__":
     asyncio.run(main())
