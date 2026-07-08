@@ -2,8 +2,7 @@
 build/
 .vscode/
 *.swp
-open62541.c
-open62541.h
+lib/open62541/
 *.env
 
 # Builds CMake (open62541 + uafx_types + exécutables générés)
