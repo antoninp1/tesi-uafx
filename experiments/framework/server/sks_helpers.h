@@ -5,7 +5,7 @@ UA_ByteString loadFile(const char *const path);
 
 UA_ClientConfig *encryptedSksClient(const char *applicationUri, UA_ByteString certificate, UA_ByteString privateKey);
 
-UA_StatusCode registerToLdsSecurely(UA_Server *server, const char *ldsUrl,
+UA_StatusCode registerToLdsSecurely(UA_Server *server, const char *ldsUrl, const char * ldsCertPath,
                          const char *clientCertPath, const char *clientKeyPath,
                          const char *applicationUri);
 

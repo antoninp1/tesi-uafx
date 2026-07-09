@@ -655,6 +655,7 @@ int main(int argc, char **argv) {
     UA_StatusCode rc = registerToLdsSecurely(
         server,
         LDS_URL,
+        buildCertPath(opts.certDir, "lds_server.cert.der"),
         buildCertPath(opts.certDir, "publisher.cert.der"),
         buildCertPath(opts.certDir, "publisher.key.der"),
         "urn:example:uafx:temperature-sensor-1"

@@ -699,6 +699,7 @@ int main(int argc, char **argv) {
     UA_StatusCode rc = registerToLdsSecurely(
         server, 
         LDS_URL, 
+        buildCertPath(opts.certDir, "lds_server.cert.der"),
         buildCertPath(opts.certDir, "subscriber.cert.der"), 
         buildCertPath(opts.certDir, "subscriber.key.der"), 
         "urn:example:uafx:density-sensor-1"

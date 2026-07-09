@@ -47,11 +47,10 @@ encryptedSksClient(const char *applicationUri, UA_ByteString certificate, UA_Byt
 }
 
 UA_StatusCode
-registerToLdsSecurely(UA_Server *server, const char *ldsUrl,
+registerToLdsSecurely(UA_Server *server, const char *ldsUrl, const char * ldsCertPath,
                          const char *clientCertPath, const char *clientKeyPath,
                          const char *applicationUri) {
     
-    const char * ldsCertPath = "scripts/certs/lds_server.cert.der";
     UA_ByteString ldsCert = loadFile(ldsCertPath);
     
     UA_ClientConfig cc;
