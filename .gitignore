@@ -5,11 +5,11 @@ lib/open62541/
 *.swp
 *.env
 
-# Builds CMake (open62541 + uafx_types + exécutables générés)
 build/
 **/build/
 
-# Au cas où un build serait lancé en mode in-source par erreur
+node_modules/
+
 src_generated/
 CMakeCache.txt
 CMakeFiles/
