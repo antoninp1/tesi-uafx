@@ -1,0 +1,46 @@
+[Unit]
+Description=UAFX PubSub Publisher (opc.eth)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=uafx
+Group=uafx
+ExecStart=/opt/uafx/bin/publisher --autostart --iface enp43s0 --url opc.eth://03-00-00-00-00-03:10.6 --cycle-time 5000 --rt --sks --cert-dir /opt/uafx/certs/
+Restart=on-failure
+RestartSec=2
+
+# CPU Affinity - bind to CPU 2
+CPUAffinity=2
+
+# Scheduling - real-time FIFO with priority 90
+CPUSchedulingPolicy=fifo
+CPUSchedulingPriority=90
+
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+LimitRTPRIO=90
+LimitMEMLOCK=infinity
+NoNewPrivileges=yes
+
+# Sandboxing
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_PACKET AF_INET AF_UNIX AF_NETLINK
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+ReadOnlyPaths=/opt/uafx/certs
+ReadWritePaths=/var/log/uafx
+
+[Install]
+WantedBy=multi-user.target
+

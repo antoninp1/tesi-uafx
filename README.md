@@ -20,15 +20,29 @@ cmake --build build -j$(nproc)
 Install the certificates :
 ```bash
 cd scripts
+python -m venv .
+source bin/activate
+pip install asyncua
 ./generate_certs.sh
 ```
 
-Run the testing scripts :
+Applying `open62541` patches :
 ```bash
-cd scripts
-python3 -m venv .
-source bin/activate
-pip install asyncua
+cd lib/open62541
+git apply ../../patches/[patchname].patch
+```
+
+Running the applications inside systemd services :
+```bash
+useradd -r -s /usr/sbin/nologin -d /opt/uafx -m uafx # Create the user who executes the service
+mkdir /opt/uafx/bin /opt/uafx/certs
+cp ./build/experiments/framework/server/pub_test ./build/experiments/framework/server/sub_test /opt/uafx/bin/ # Copy the binaries to user directory
+cp ./scripts/certs/* /opt/uafx/certs/ # Copy the certs to the user directory
+chown -R uafx:uafx /opt/uafx/ # Change the owner to uafx
+chmod -R 550 /opt/uafx/ # Give only execution and reading rights to uafx user on its files
+cp services/* /etc/systemd/system/ # Copy the services to the service system directory
+systemctl start uafx-[publisher/subscriber] # Start the application
+journalctl -u uafx-[publisher/subscriber] -f # Show continuous application logs
 ```
 
 The fork main modifications are present in the directory `experiments/framework/server`, which contains LDS and SKS server implementation, publisher and subscriber implementation with encryption and real-time features configurable through command line arguments.
