@@ -10,6 +10,20 @@ git clone --recurse-submodules https://github.com/antoninp1/tesi-uafx
 cd tesi-uafx
 ```
 
+Install the certificates :
+```bash
+cd certs
+./gen_ca.sh
+./gen.sh
+./gen_crl.sh
+```
+
+Applying `open62541` patches :
+```bash
+cd lib/open62541
+git apply ../../patches/[patchname].patch
+```
+
 Create build directory and compile the project :
 ```bash
 mkdir build
@@ -17,19 +31,12 @@ cmake -S . -B build
 cmake --build build -j$(nproc)
 ```
 
-Install the certificates :
+Running the scripts :
 ```bash
 cd scripts
 python -m venv .
 source bin/activate
 pip install asyncua
-./generate_certs.sh
-```
-
-Applying `open62541` patches :
-```bash
-cd lib/open62541
-git apply ../../patches/[patchname].patch
 ```
 
 Running the applications inside systemd services :
