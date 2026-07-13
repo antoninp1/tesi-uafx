@@ -82,21 +82,16 @@ int main(int argc, char **argv) {
 
     /* Porta da riga di comando (opzionale) */
     UA_UInt16 port = LDS_DEFAULT_PORT;
-    if(argc >= 2) {
-        int p = atoi(argv[1]);
+    if(argc >= 3) {
+        int p = atoi(argv[2]);
         if(p > 0 && p < 65536)
             port = (UA_UInt16)p;
     }
 
+    UA_ByteString crl = loadFile(buildCertPath(argv[1], "crl.der"));
     UA_ByteString cert = loadFile(buildCertPath(argv[1], "lds_server.cert.der"));
     UA_ByteString key = loadFile(buildCertPath(argv[1], "lds_server.key.der"));
-
-    UA_ByteString trustList[4];
-    trustList[0] = loadFile(buildCertPath(argv[1], "publisher.cert.der"));
-    trustList[1] = loadFile(buildCertPath(argv[1], "subscriber.cert.der"));
-    trustList[2] = loadFile(buildCertPath(argv[1], "asyncua.cert.der"));
-    trustList[3] = loadFile(buildCertPath(argv[1], "sks_server.cert.der"));
-    size_t trustListSize = 4;
+    UA_ByteString caCert = loadFile(buildCertPath(argv[1], "ca.cert.der"));
 
     printf("\n");
     printf("╔═════════════════════════════════════════════════════╗\n");
@@ -106,23 +101,20 @@ int main(int argc, char **argv) {
     printf("[LDS] Timeout server inattivi: %d ms\n\n", LDS_SERVER_TIMEOUT_MS);
 
     /* ─── Creazione server ───────────────────────────────────── */
-    UA_Server *server = UA_Server_new();
-    if(!server) {
-        fprintf(stderr, "[LDS] Errore: impossibile creare UA_Server\n");
-        return EXIT_FAILURE;
-    }
+    //UA_Server *server = UA_Server_new();
+    UA_ServerConfig config;
+    memset(&config, 0, sizeof(UA_ServerConfig));
 
-    UA_ServerConfig *config = UA_Server_getConfig(server);
     //UA_ServerConfig_setMinimal(config, port, NULL);
     UA_StatusCode res = UA_ServerConfig_setDefaultWithSecurityPolicies(
-        config, port, &cert, &key, trustList, trustListSize, NULL, 0, NULL, 0);
+        &config, port, &cert, &key, &caCert, 1, NULL, 0, &crl, 1);
 
-    config->applicationDescription.discoveryUrlsSize = 1;
-    config->applicationDescription.discoveryUrls = (UA_String *)UA_Array_new(1, &UA_TYPES[UA_TYPES_STRING]);
+    config.applicationDescription.discoveryUrlsSize = 1;
+    config.applicationDescription.discoveryUrls = (UA_String *)UA_Array_new(1, &UA_TYPES[UA_TYPES_STRING]);
     char discoveryUrlBuf[64];
     snprintf(discoveryUrlBuf, sizeof(discoveryUrlBuf), "opc.tcp://%s:4840", LDS_SERVER_IP_ADDR);
-    config->applicationDescription.discoveryUrls[0] = UA_String_fromChars(discoveryUrlBuf);
-    config->mdnsConfig.serverCapabilitiesSize = 0;
+    config.applicationDescription.discoveryUrls[0] = UA_String_fromChars(discoveryUrlBuf);
+    config.mdnsConfig.serverCapabilitiesSize = 0;
 
 
     // Specifica gli IP delle interfacce su cui fare mDNS
@@ -132,19 +124,16 @@ int main(int argc, char **argv) {
     mdnsIPs[1] = inet_addr("192.168.100.3");
     config->mdnsIpAddressList = mdnsIPs;
     config->mdnsIpAddressListSize = 2;*/
-    config->mdnsInterfaceIP = UA_String_fromChars(LDS_SERVER_IP_ADDR);
+    config.mdnsInterfaceIP = UA_String_fromChars(LDS_SERVER_IP_ADDR);
     /* ─── Identità applicazione ──────────────────────────────── */
-    UA_String_clear(&config->applicationDescription.applicationUri);
-    config->applicationDescription.applicationUri =
-        UA_String_fromChars(LDS_APPLICATION_URI);
+    UA_String_clear(&config.applicationDescription.applicationUri);
+    config.applicationDescription.applicationUri = UA_String_fromChars(LDS_APPLICATION_URI);
 
-    UA_LocalizedText_clear(&config->applicationDescription.applicationName);
-    config->applicationDescription.applicationName =
-        UA_LOCALIZEDTEXT_ALLOC("en-US", "UAFX Local Discovery Server");
+    UA_LocalizedText_clear(&config.applicationDescription.applicationName);
+    config.applicationDescription.applicationName = UA_LOCALIZEDTEXT_ALLOC("en-US", "UAFX Local Discovery Server");
 
     /* L'LDS si identifica come DiscoveryServer, non come Server */
-    config->applicationDescription.applicationType =
-        UA_APPLICATIONTYPE_DISCOVERYSERVER;
+    config.applicationDescription.applicationType = UA_APPLICATIONTYPE_DISCOVERYSERVER;
 
     /* ─── Abilita Discovery ───────────────────────────────────── */
 #ifdef UA_ENABLE_DISCOVERY
@@ -160,20 +149,41 @@ int main(int argc, char **argv) {
 #endif
 
     /* ─── mDNS opzionale ─────────────────────────────────────── */
+    /*
 #ifdef UA_ENABLE_DISCOVERY_MULTICAST
     // Disabling mDNS to avoid bad registration
-    config->mdnsEnabled = UA_FALSE;
-    UA_String_clear(&config->mdnsConfig.mdnsServerName);
-    config->mdnsConfig.mdnsServerName =
+    config.mdnsEnabled = UA_FALSE;
+    UA_String_clear(&config.mdnsConfig.mdnsServerName);
+    config.mdnsConfig.mdnsServerName =
         UA_String_fromChars("UAFX-LDS");
 
     UA_Server_setServerOnNetworkCallback(server, onServerOnNetwork, NULL);
     printf("[LDS] mDNS: ABILITATO (_opcua-tcp._tcp.local)\n");
 #else
     printf("[LDS] mDNS: DISABILITATO (solo discovery TCP/IP)\n");
-#endif
+#endif*/
 
     /* ─── Avvio ──────────────────────────────────────────────── */
+
+    for(size_t i = 0; i < config.endpointsSize; i++) {
+        if(config.endpoints[i].securityMode == UA_MESSAGESECURITYMODE_NONE) {
+            UA_EndpointDescription_clear(&config.endpoints[i]);
+            if(i + 1 < config.endpointsSize) {
+                config.endpoints[i] = config.endpoints[config.endpointsSize - 1];
+                i--;
+            }
+            config.endpointsSize--;
+        }
+    }
+    disableAnonymous(&config);
+    config.accessControl.activateSession = activateSession; 
+    UA_Server *server = UA_Server_newWithConfig(&config);
+
+    if(!server) {
+        fprintf(stderr, "[LDS] Errore: impossibile creare UA_Server\n");
+        return EXIT_FAILURE;
+    }
+
     UA_StatusCode retval = UA_Server_run_startup(server);
     if(retval != UA_STATUSCODE_GOOD) {
         fprintf(stderr, "[LDS] Errore avvio: %s\n",
@@ -181,18 +191,6 @@ int main(int argc, char **argv) {
         UA_Server_delete(server);
         return EXIT_FAILURE;
     }
-
-    for(size_t i = 0; i < config->endpointsSize; i++) {
-        if(config->endpoints[i].securityMode == UA_MESSAGESECURITYMODE_NONE) {
-            UA_EndpointDescription_clear(&config->endpoints[i]);
-            if(i + 1 < config->endpointsSize) {
-                config->endpoints[i] = config->endpoints[config->endpointsSize - 1];
-                i--;
-            }
-            config->endpointsSize--;
-        }
-    }
-    disableAnonymous(config);
 
     printf("\n");
     printf("════════════════════════════════════════════════════════\n");

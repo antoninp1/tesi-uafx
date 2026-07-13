@@ -43,7 +43,7 @@
 /* ─── Namespace index di FX/AC nel server ─────────────────── */
 #define FXAC_NS_URI   "http://opcfoundation.org/UA/FX/AC/"
 
-#define SKS_SERVER_URL_FALLBACK         "opc.tcp://192.168.17.112:4850"
+#define SKS_SERVER_URL_FALLBACK         "opc.tcp://192.168.17.143:4850"
 #define SKS_APPLICATION_URI     "urn:example:uafx:sks-server"
 #define DEMO_SECURITYGROUPNAME  "UafxSecurityGroup"
 
@@ -53,8 +53,9 @@
 #define FXAC_ID_FUNCTIONALENTITYTYPE     4
 
 #define NS_LOCAL 1
-#define LDS_URL          "opc.tcp://192.168.17.112:4840"
+#define LDS_URL          "opc.tcp://192.168.17.143:4840"
 #define SERVER_PUBLIC_URL "opc.tcp://edge-up-3:4941"
+#define APPLICATION_URI "urn:example:uafx:temperature-sensor-1"
 
 static UA_NodeId connectionIdent, publishedDataSetIdent, writerGroupIdent,
     dataSetWriterIdent;
@@ -530,15 +531,14 @@ int main(int argc, char **argv) {
 
     config->customDataTypes = &customDataTypesDI;
 
-    size_t trustListSize = 1;
-    UA_ByteString trustList[trustListSize];
-    trustList[0] = loadFile(buildCertPath(opts.certDir, "asyncua.cert.der"));
+    UA_ByteString caCert = loadFile(buildCertPath(opts.certDir, "ca.cert.der"));
+    UA_ByteString crl = loadFile(buildCertPath(opts.certDir, "crl.der"));
     char *serverCertPath = buildCertPath(opts.certDir, "temperature_server.cert.der");
     char *serverKeyPath  = buildCertPath(opts.certDir, "temperature_server.key.der");
     UA_ByteString serverCert = loadFile(serverCertPath);
     UA_ByteString serverKey  = loadFile(serverKeyPath);
 
-    UA_ServerConfig_setDefaultWithSecurityPolicies(config, 4941, &serverCert, &serverKey, trustList, trustListSize, NULL, 0, NULL, 0);
+    UA_ServerConfig_setDefaultWithSecurityPolicies(config, 4941, &serverCert, &serverKey, &caCert, 1, &crl, 1, NULL, 0);
 
     /* AccessControl: X.509 certificate authentication + restrict
      * Method calls to authenticated sessions only. Uses the same
@@ -569,14 +569,14 @@ int main(int argc, char **argv) {
         UA_Server_delete(server);
         return EXIT_FAILURE;
     }
-    sksClientConfigGlobal = encryptedSksClient("urn:example:uafx:temperature-sensor-1", pubCert, pubKey);
+    sksClientConfigGlobal = encryptedSksClient(APPLICATION_URI, pubCert, pubKey, loadFile(buildCertPath(opts.certDir, "sks_server.cert.der")), crl);
     UA_ByteString_clear(&pubCert);
     UA_ByteString_clear(&pubKey);
     }
 
 
     UA_String_clear(&config->applicationDescription.applicationUri);
-    config->applicationDescription.applicationUri = UA_String_fromChars("urn:example:uafx:temperature-sensor-1");
+    config->applicationDescription.applicationUri = UA_String_fromChars(APPLICATION_URI);
 
     UA_LocalizedText_clear(&config->applicationDescription.applicationName);
     config->applicationDescription.applicationName =
@@ -634,7 +634,7 @@ int main(int argc, char **argv) {
         addPubSubConnection(server, &transportProfile, &networkAddressUrl);
         addPublishedDataSet(server);
         addDataSetField(server);
-        sksServerUrl = resolveSksUrlFromLds(LDS_URL, SKS_APPLICATION_URI, buildCertPath(opts.certDir, "publisher.cert.der"), buildCertPath(opts.certDir, "publisher.key.der"));
+        sksServerUrl = resolveSksUrlFromLds(LDS_URL, SKS_APPLICATION_URI, buildCertPath(opts.certDir, "publisher.cert.der"), buildCertPath(opts.certDir, "publisher.key.der"), buildCertPath(opts.certDir, "crl.der"));
         if (sksServerUrl) {
             printf("[INFO] SKS server URL found in LDS: %s\n", sksServerUrl);
         } else {
@@ -657,7 +657,8 @@ int main(int argc, char **argv) {
         buildCertPath(opts.certDir, "lds_server.cert.der"),
         buildCertPath(opts.certDir, "publisher.cert.der"),
         buildCertPath(opts.certDir, "publisher.key.der"),
-        "urn:example:uafx:temperature-sensor-1"
+        buildCertPath(opts.certDir, "crl.der"),
+        APPLICATION_URI
     );
     if(rc != UA_STATUSCODE_GOOD) {
         printf("[WARNING] Shared LDS registration init failed: %s\n", UA_StatusCode_name(rc));

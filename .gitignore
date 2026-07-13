@@ -19,4 +19,6 @@ compile_commands.json
 *.o
 *.a
 *.so
-*.der
+certs/*
+!certs/*.sh
+!certs/list.txt

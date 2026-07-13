@@ -43,7 +43,7 @@
 #define DEMO_MAXFUTUREKEYCOUNT 2
 #define DEMO_MAXPASTKEYCOUNT 2
 
-#define LDS_URL "opc.tcp://192.168.17.112:4840"
+#define LDS_URL "opc.tcp://192.168.17.143:4840"
 #define LDS_REREGISTER_INTERVAL_MS 30000.0
 
 static volatile UA_Boolean running = true;
@@ -112,13 +112,15 @@ main(int argc, char **argv) {
     signal(SIGINT,  stopHandler);
     signal(SIGTERM, stopHandler);
 
-    if(argc < 3) {
+    if(argc < 2) {
         usage(argv[0]);
         return EXIT_FAILURE;
     }
 
-    UA_ByteString certificate = loadFile(argv[1]);
-    UA_ByteString privateKey = loadFile(argv[2]);
+    UA_ByteString crl = loadFile(buildCertPath(argv[1], "crl.der"));
+    UA_ByteString caCert = loadFile(buildCertPath(argv[1], "ca.cert.der"));
+    UA_ByteString certificate = loadFile(buildCertPath(argv[1], "sks_server.cert.der"));
+    UA_ByteString privateKey = loadFile(buildCertPath(argv[1], "sks_server.key.der"));
 
     if(certificate.length == 0 || privateKey.length == 0) {
         UA_LOG_FATAL(UA_Log_Stdout, UA_LOGCATEGORY_SERVER,
@@ -127,51 +129,15 @@ main(int argc, char **argv) {
     }
 
     UA_UInt16 port = 4850;
-    UA_ByteString trustList[100];
-    size_t trustListSize = 0;
-
-    for(int i = 4; i < argc; i++) {
-        if(strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
-            port = (UA_UInt16)atoi(argv[++i]);
-            continue;
-        }
-        if(strcmp(argv[i], "--trustlist") == 0) {
-            for(int j = i + 1; j < argc; j++) {
-                if(trustListSize >= 100) {
-                    UA_LOG_FATAL(UA_Log_Stdout, UA_LOGCATEGORY_SERVER,
-                                 "Too many entries in trustlist");
-                    return EXIT_FAILURE;
-                }
-                trustList[trustListSize] = loadFile(argv[j]);
-                if(trustList[trustListSize].length == 0) {
-                    UA_LOG_FATAL(UA_Log_Stdout, UA_LOGCATEGORY_SERVER,
-                                 "Unable to load trustlist entry %s", argv[j]);
-                    return EXIT_FAILURE;
-                }
-                trustListSize++;
-                i = j;
-            }
-            continue;
-        }
-        usage(argv[0]);
-        return EXIT_FAILURE;
-    }
-
-    if(trustListSize == 0) {
-        UA_LOG_WARNING(UA_Log_Stdout, UA_LOGCATEGORY_SERVER,
-            "No --trustlist provided: NO client certificate will be "
-            "trusted, the Publisher/Subscriber will fail to connect.");
-    }
 
     UA_ServerConfig config;
     memset(&config, 0, sizeof(UA_ServerConfig));
 
     UA_StatusCode res = UA_ServerConfig_setDefaultWithSecurityPolicies(
         &config, port, &certificate, &privateKey,
-        trustList, trustListSize,
+        &caCert, 1,
         NULL, 0,   /* issuerList */
-        NULL, 0);  /* revocationList */
-    printf("abc");
+        &crl, 1);  /* revocationList */
     if(res != UA_STATUSCODE_GOOD) {
         UA_LOG_FATAL(UA_Log_Stdout, UA_LOGCATEGORY_SERVER,
                      "ServerConfig setup failed: %s", UA_StatusCode_name(res));
@@ -236,7 +202,11 @@ main(int argc, char **argv) {
     disableUnencrypted(&config);
     disableAnonymous(&config);
     
-    registerToLdsSecurely(server, LDS_URL, argv[3], argv[1], argv[2], "urn:example:uafx:sks-server");
+    //registerToLdsSecurely(server, LDS_URL, argv[3], argv[1], argv[2], "urn:example:uafx:sks-server");
+    UA_UInt64 ldsRegisterCallbackId = 0;
+    void *ldsRegisterCtx = NULL;
+    startPeriodicLdsRegistration(server, LDS_URL, buildCertPath(argv[1], "ca.cert.der"), buildCertPath(argv[1], "sks_server.cert.der"), buildCertPath(argv[1], "sks_server.key.der"), buildCertPath(argv[1], "crl.der"), "urn:example:uafx:sks-server", 5*60*1000.0,
+                             &ldsRegisterCallbackId, &ldsRegisterCtx);
 
     
     while (running)
@@ -244,11 +214,12 @@ main(int argc, char **argv) {
     //UA_StatusCode retval = UA_Server_runUntilInterrupt(server);
 
     retval = UA_Server_run_shutdown(server);
+    stopPeriodicLdsRegistration(server, ldsRegisterCallbackId, ldsRegisterCtx);
     UA_Server_delete(server);
     UA_ByteString_clear(&certificate);
     UA_ByteString_clear(&privateKey);
-    for(size_t i = 0; i < trustListSize; i++)
-        UA_ByteString_clear(&trustList[i]);
+    UA_ByteString_clear(&caCert);
+    UA_ByteString_clear(&crl);
 
     return retval == UA_STATUSCODE_GOOD ? EXIT_SUCCESS : EXIT_FAILURE;
 }

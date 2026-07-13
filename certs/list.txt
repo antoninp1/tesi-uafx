@@ -1,0 +1,7 @@
+temperature_server urn:example:uafx:temperature-sensor-1
+density_server     urn:example:uafx:density-sensor-1
+publisher          urn:example:uafx:temperature-sensor-1
+subscriber         urn:example:uafx:density-sensor-1
+lds_server         urn:example:uafx:lds
+sks_server         urn:example:uafx:sks-server
+asyncua            urn:example:uafx:asyncua

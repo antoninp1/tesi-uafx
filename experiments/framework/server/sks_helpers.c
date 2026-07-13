@@ -3,6 +3,15 @@
 #include <stdio.h>
 #include "sks_helpers.h"
 
+typedef struct {
+    char *ldsUrl;
+    char *caCertPath;
+    char *clientCertPath;
+    char *clientKeyPath;
+    char *crlPath;
+    char *applicationUri;
+} LdsRegisterCtx;
+
 UA_ByteString
 loadFile(const char *const path) {
     UA_ByteString fileContents = UA_STRING_NULL;
@@ -29,10 +38,10 @@ loadFile(const char *const path) {
 }
 
 UA_ClientConfig *
-encryptedSksClient(const char *applicationUri, UA_ByteString certificate, UA_ByteString privateKey) {
+encryptedSksClient(const char *applicationUri, UA_ByteString certificate, UA_ByteString privateKey, UA_ByteString sksCert, UA_ByteString crl) {
     UA_ClientConfig *cc = (UA_ClientConfig *)UA_calloc(1, sizeof(UA_ClientConfig));
     cc->securityMode = UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
-    UA_ClientConfig_setDefaultEncryption(cc, certificate, privateKey, NULL, 0, NULL, 0);
+    UA_ClientConfig_setDefaultEncryption(cc, certificate, privateKey, &sksCert, 1, &crl, 1);
     cc->securityPolicyUri = UA_STRING_ALLOC("http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256");
     UA_String_clear(&cc->clientDescription.applicationUri);
     cc->clientDescription.applicationUri = UA_String_fromChars(applicationUri);
@@ -47,11 +56,12 @@ encryptedSksClient(const char *applicationUri, UA_ByteString certificate, UA_Byt
 }
 
 UA_StatusCode
-registerToLdsSecurely(UA_Server *server, const char *ldsUrl, const char * ldsCertPath,
-                         const char *clientCertPath, const char *clientKeyPath,
+registerToLdsSecurely(UA_Server *server, const char *ldsUrl, const char * caCertPath,
+                         const char *clientCertPath, const char *clientKeyPath, const char *crlPath,
                          const char *applicationUri) {
     
-    UA_ByteString ldsCert = loadFile(ldsCertPath);
+    UA_ByteString caCert = loadFile(caCertPath);
+    UA_ByteString crl = loadFile(crlPath);
     
     UA_ClientConfig cc;
     memset(&cc, 0, sizeof(UA_ClientConfig));
@@ -68,7 +78,7 @@ registerToLdsSecurely(UA_Server *server, const char *ldsUrl, const char * ldsCer
 
     cc.securityMode = UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
     cc.securityPolicyUri = UA_STRING_ALLOC("http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256");
-    UA_ClientConfig_setDefaultEncryption(&cc, clientCert, clientKey, &ldsCert, 1, NULL, 0);
+    UA_ClientConfig_setDefaultEncryption(&cc, clientCert, clientKey, &caCert, 1, &crl, 1);
 
     UA_String_clear(&cc.clientDescription.applicationUri);
     cc.clientDescription.applicationUri = UA_String_fromChars(applicationUri);
@@ -116,7 +126,8 @@ disableAnonymous(UA_ServerConfig *config) {
 
 char *
 resolveSksUrlFromLds(const char *ldsUrl, const char *sksApplicationUri,
-                     const char *clientCertPath, const char *clientKeyPath) {
+                     const char *clientCertPath, const char *clientKeyPath, const char *crlPath) {
+    UA_ByteString crl = loadFile(crlPath);
     UA_ByteString cert = loadFile(clientCertPath);
     UA_ByteString key  = loadFile(clientKeyPath);
     if(cert.length == 0 || key.length == 0) {
@@ -134,7 +145,7 @@ resolveSksUrlFromLds(const char *ldsUrl, const char *sksApplicationUri,
     }
     UA_ClientConfig *cc = UA_Client_getConfig(client);
     cc->securityMode = UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
-    UA_ClientConfig_setDefaultEncryption(cc, cert, key, NULL, 0, NULL, 0);
+    UA_ClientConfig_setDefaultEncryption(cc, cert, key, NULL, 0, &crl, 1);
 
     UA_ByteString_clear(&cert);
     UA_ByteString_clear(&key);
@@ -276,4 +287,60 @@ getUserExecutableOnObject_app(UA_Server *server, UA_AccessControl *ac,
      * X.509 certificate was verified). Anonymous sessions
      * (sessionContext == NULL) are denied. */
     return sessionContext != NULL;
+}
+
+
+static void
+periodicLdsRegisterCallback(UA_Server *server, void *data) {
+    LdsRegisterCtx *ctx = (LdsRegisterCtx *)data;
+    UA_StatusCode rc = registerToLdsSecurely(server, ctx->ldsUrl, ctx->caCertPath,
+                                             ctx->clientCertPath, ctx->clientKeyPath, ctx->crlPath,
+                                             ctx->applicationUri);
+    if(rc != UA_STATUSCODE_GOOD)
+        printf("[WARNING] LDS registration failed: %s\n", UA_StatusCode_name(rc));
+}
+
+UA_StatusCode
+startPeriodicLdsRegistration(UA_Server *server,
+                             const char *ldsUrl,
+                             const char *caCertPath,
+                             const char *clientCertPath,
+                             const char *clientKeyPath,
+                             const char *crlPath,
+                             const char *applicationUri,
+                             UA_Double intervalMs,
+                             UA_UInt64 *callbackId,
+                             void **ctxOut) {
+    LdsRegisterCtx *ctx = (LdsRegisterCtx *)calloc(1, sizeof(LdsRegisterCtx));
+    if(!ctx)
+        return UA_STATUSCODE_BADOUTOFMEMORY;
+
+    ctx->ldsUrl         = strdup(ldsUrl);
+    ctx->caCertPath    = strdup(caCertPath);
+    ctx->clientCertPath = strdup(clientCertPath);
+    ctx->clientKeyPath  = strdup(clientKeyPath);
+    ctx->crlPath = strdup(crlPath);
+    ctx->applicationUri = strdup(applicationUri);
+
+    periodicLdsRegisterCallback(server, ctx); /* enregistrement immédiat */
+
+    UA_StatusCode rc = UA_Server_addRepeatedCallback(server, periodicLdsRegisterCallback,
+                                                     ctx, intervalMs, callbackId);
+    *ctxOut = ctx;
+    return rc;
+}
+
+void
+stopPeriodicLdsRegistration(UA_Server *server, UA_UInt64 callbackId, void *ctx) {
+    UA_Server_removeRepeatedCallback(server, callbackId);
+    if(!ctx)
+        return;
+    LdsRegisterCtx *c = (LdsRegisterCtx *)ctx;
+    free(c->ldsUrl);
+    free(c->caCertPath);
+    free(c->clientCertPath);
+    free(c->clientKeyPath);
+    free(c->crlPath);
+    free(c->applicationUri);
+    free(c);
 }
