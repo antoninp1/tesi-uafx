@@ -38,7 +38,7 @@
  * ri-registra entro questo intervallo (ms). */
 #define LDS_SERVER_TIMEOUT_MS  60000   /* 60 secondi */
 
-#define LDS_SERVER_IP_ADDR "192.168.17.143"
+#define LDS_SERVER_IP_ADDR "192.168.17.112"
 
 static volatile UA_Boolean running = true;
 

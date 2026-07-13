@@ -4,7 +4,7 @@ project(tesi_uafx C)
 set(CMAKE_C_STANDARD 99)
 
 # ---------------------------------------------------------
-# 1. open62541 — compilé UNE SEULE FOIS pour tout le repo
+# 1. open62541 — compiled one time for the whole repo
 # ---------------------------------------------------------
 set(UA_NAMESPACE_ZERO "FULL" CACHE STRING "" FORCE)
 set(UA_ENABLE_ENCRYPTION "MBEDTLS" CACHE STRING "" FORCE)
@@ -18,7 +18,7 @@ add_subdirectory(lib/open62541)
 set(NODESET_DIR ${UA_NODESET_DIR})
 
 # ---------------------------------------------------------
-# 2. Génération des types UAFX — UNE SEULE FOIS aussi
+# 2. Generating UAFX types
 # ---------------------------------------------------------
 ua_generate_nodeset_and_datatypes(
     NAME "di"
@@ -53,7 +53,7 @@ ua_generate_nodeset_and_datatypes(
 )
 
 # ---------------------------------------------------------
-# 3. uafx_types : une lib réutilisable par toutes les expériences
+# 3. uafx_types as reusable lib
 # ---------------------------------------------------------
 add_library(uafx_types STATIC
     ${UA_NODESET_DI_SOURCES}        ${UA_TYPES_DI_SOURCES}
@@ -69,7 +69,7 @@ target_include_directories(uafx_types PUBLIC ${CMAKE_BINARY_DIR}/src_generated/o
 target_link_libraries(uafx_types PUBLIC open62541::open62541)
 
 # ---------------------------------------------------------
-# 4. Expériences
+# 4. Experiments
 # ---------------------------------------------------------
 add_subdirectory(experiments/discovery_fx)
 add_subdirectory(experiments/framework/server)

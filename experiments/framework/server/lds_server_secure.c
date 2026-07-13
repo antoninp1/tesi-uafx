@@ -88,14 +88,14 @@ int main(int argc, char **argv) {
             port = (UA_UInt16)p;
     }
 
-    UA_ByteString cert = loadFile("scripts/certs/lds_server.cert.der");
-    UA_ByteString key = loadFile("scripts/certs/lds_server.key.der");
+    UA_ByteString cert = loadFile(buildCertPath(argv[1], "lds_server.cert.der"));
+    UA_ByteString key = loadFile(buildCertPath(argv[1], "lds_server.key.der"));
 
     UA_ByteString trustList[4];
-    trustList[0] = loadFile("scripts/certs/publisher.cert.der");
-    trustList[1] = loadFile("scripts/certs/subscriber.cert.der");
-    trustList[2] = loadFile("scripts/certs/asyncua.cert.der");
-    trustList[3] = loadFile("scripts/certs/sks_server.cert.der");
+    trustList[0] = loadFile(buildCertPath(argv[1], "publisher.cert.der"));
+    trustList[1] = loadFile(buildCertPath(argv[1], "subscriber.cert.der"));
+    trustList[2] = loadFile(buildCertPath(argv[1], "asyncua.cert.der"));
+    trustList[3] = loadFile(buildCertPath(argv[1], "sks_server.cert.der"));
     size_t trustListSize = 4;
 
     printf("\n");

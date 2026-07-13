@@ -43,7 +43,7 @@
 /* ─── Namespace index di FX/AC nel server ─────────────────── */
 #define FXAC_NS_URI   "http://opcfoundation.org/UA/FX/AC/"
 
-#define SKS_SERVER_URL_FALLBACK         "opc.tcp://192.168.17.143:4850"
+#define SKS_SERVER_URL_FALLBACK         "opc.tcp://192.168.17.112:4850"
 #define SKS_APPLICATION_URI     "urn:example:uafx:sks-server"
 #define DEMO_SECURITYGROUPNAME  "UafxSecurityGroup"
 
@@ -53,7 +53,7 @@
 #define FXAC_ID_FUNCTIONALENTITYTYPE     4
 
 #define NS_LOCAL 1
-#define LDS_URL          "opc.tcp://192.168.17.143:4840"
+#define LDS_URL          "opc.tcp://192.168.17.112:4840"
 #define SERVER_PUBLIC_URL "opc.tcp://edge-up-3:4941"
 
 static UA_NodeId connectionIdent, publishedDataSetIdent, writerGroupIdent,
@@ -584,8 +584,7 @@ int main(int argc, char **argv) {
     config->applicationDescription.discoveryUrlsSize = 1;
     config->applicationDescription.discoveryUrls =
         (UA_String*)UA_Array_new(1, &UA_TYPES[UA_TYPES_STRING]);
-    config->applicationDescription.discoveryUrls[0] =
-        UA_String_fromChars(SERVER_PUBLIC_URL);
+    config->applicationDescription.discoveryUrls[0] = hostname;
 
     config->mdnsEnabled = UA_FALSE;
     /*

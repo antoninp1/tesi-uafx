@@ -66,16 +66,13 @@ registerToLdsSecurely(UA_Server *server, const char *ldsUrl, const char * ldsCer
         return UA_STATUSCODE_BADARGUMENTSMISSING;
     }
 
-    // 1. Forcer le chiffrement strict exigé par notre LDS sécurisé
     cc.securityMode = UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
     cc.securityPolicyUri = UA_STRING_ALLOC("http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256");
     UA_ClientConfig_setDefaultEncryption(&cc, clientCert, clientKey, &ldsCert, 1, NULL, 0);
 
-    // 2. Aligner l'URI applicative du client interne avec le certificat X509
     UA_String_clear(&cc.clientDescription.applicationUri);
     cc.clientDescription.applicationUri = UA_String_fromChars(applicationUri);
 
-    // 3. Injecter le jeton d'identité X509 (contourne l'accès Anonyme interdit)
     UA_X509IdentityToken *x509Token = UA_X509IdentityToken_new();
     UA_ByteString_copy(&clientCert, &x509Token->certificateData);
     UA_ExtensionObject_clear(&cc.userIdentityToken);
@@ -83,15 +80,12 @@ registerToLdsSecurely(UA_Server *server, const char *ldsUrl, const char * ldsCer
     cc.userIdentityToken.content.decoded.type = &UA_TYPES[UA_TYPES_X509IDENTITYTOKEN];
     cc.userIdentityToken.content.decoded.data = x509Token;
 
-    // 4. Appel du service d'enregistrement périodique d'open62541
     UA_String discoveryUrl = UA_STRING((char*)ldsUrl);
     UA_StatusCode retval = UA_Server_registerDiscovery(server, &cc, discoveryUrl, UA_STRING_NULL);
 
-    // Nettoyage de la mémoire temporaire locale
     UA_ByteString_clear(&clientCert);
     UA_ByteString_clear(&clientKey);
     UA_String_clear(&cc.securityPolicyUri);
-    // Note: cc.userIdentityToken et cc.clientDescription.applicationUri sont copiés ou libérés par la stack interne
 
     return retval;
 }

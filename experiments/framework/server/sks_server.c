@@ -8,7 +8,7 @@
  * GetSecurityKeys Method, subject to authentication.
  *
  * Usage:
- *   ./sks_server <server-cert.der> <server-key.der> \
+ *   ./sks_server <server-cert.der> <server-key.der> <lds-server-cert.der> \
  *       --trustlist <publisher-cert.der> <subscriber-cert.der> \
  *       [--port 4850]
  *
@@ -43,7 +43,7 @@
 #define DEMO_MAXFUTUREKEYCOUNT 2
 #define DEMO_MAXPASTKEYCOUNT 2
 
-#define LDS_URL "opc.tcp://192.168.17.143:4840"
+#define LDS_URL "opc.tcp://192.168.17.112:4840"
 #define LDS_REREGISTER_INTERVAL_MS 30000.0
 
 static volatile UA_Boolean running = true;
@@ -97,7 +97,7 @@ addSecurityGroup(UA_Server *server, UA_NodeId *outNodeId) {
 static void
 usage(const char *progname) {
     fprintf(stderr,
-        "Usage: %s <server-cert.der> <server-key.der>\n"
+        "Usage: %s <server-cert.der> <server-key.der> <lds-cert.der>\n"
         "       [--port <port>]                  (default: 4850)\n"
         "       [--trustlist <cert1.der> <cert2.der> ...]\n"
         "\n"
@@ -130,7 +130,7 @@ main(int argc, char **argv) {
     UA_ByteString trustList[100];
     size_t trustListSize = 0;
 
-    for(int i = 3; i < argc; i++) {
+    for(int i = 4; i < argc; i++) {
         if(strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
             port = (UA_UInt16)atoi(argv[++i]);
             continue;
@@ -236,7 +236,7 @@ main(int argc, char **argv) {
     disableUnencrypted(&config);
     disableAnonymous(&config);
     
-    registerToLdsSecurely(server, LDS_URL, argv[1], argv[2], "urn:example:uafx:sks-server");
+    registerToLdsSecurely(server, LDS_URL, argv[3], argv[1], argv[2], "urn:example:uafx:sks-server");
 
     
     while (running)
