@@ -3,15 +3,6 @@
 #include <stdio.h>
 #include "sks_helpers.h"
 
-typedef struct {
-    char *ldsUrl;
-    char *caCertPath;
-    char *clientCertPath;
-    char *clientKeyPath;
-    char *crlPath;
-    char *applicationUri;
-} LdsRegisterCtx;
-
 UA_ByteString
 loadFile(const char *const path) {
     UA_ByteString fileContents = UA_STRING_NULL;
@@ -281,16 +272,6 @@ startPeriodicLdsRegistration(UA_Server *server,
 void
 stopPeriodicLdsRegistration(UA_Server *server, UA_UInt64 callbackId, void *ctx) {
     UA_Server_removeRepeatedCallback(server, callbackId);
-    if(!ctx)
-        return;
-    LdsRegisterCtx *c = (LdsRegisterCtx *)ctx;
-    free(c->ldsUrl);
-    free(c->caCertPath);
-    free(c->clientCertPath);
-    free(c->clientKeyPath);
-    free(c->crlPath);
-    free(c->applicationUri);
-    free(c);
 }
 
 
