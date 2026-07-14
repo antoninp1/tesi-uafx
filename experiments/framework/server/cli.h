@@ -23,6 +23,7 @@ typedef struct {
     UA_Boolean autostart;
     UA_Boolean sks;
     char * certDir;
+    char * ldsUrl;
 } CliOptions;
 
 enum {
@@ -36,6 +37,7 @@ enum {
     OPT_SCHED_PRIO,
     OPT_SKS,
     OPT_CERT_DIR,
+    OPT_LDS_URL,
     OPT_AUTOSTART
 };
 

@@ -2,7 +2,7 @@ import asyncio
 from asyncua import Client, ua
 from asyncua.crypto.security_policies import SecurityPolicyBasic256Sha256
 
-LDS_URL = "opc.tcp://192.168.17.143:4840"
+LDS_URL = "opc.tcp://192.168.17.112:4840"
 
 async def main():
     client = Client(url=LDS_URL)

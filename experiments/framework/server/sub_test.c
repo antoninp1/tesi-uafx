@@ -42,7 +42,7 @@
 /* ─── Namespace index di FX/AC nel server ─────────────────── */
 #define FXAC_NS_URI   "http://opcfoundation.org/UA/FX/AC/"
 
-#define SKS_SERVER_URL_FALLBACK          "opc.tcp://192.168.17.143:4850"
+#define SKS_SERVER_URL_FALLBACK          "opc.tcp://192.168.17.112:4850"
 #define SKS_APPLICATION_URI     "urn:example:uafx:sks-server"
 #define DEMO_SECURITYGROUPNAME  "UafxSecurityGroup"
 
@@ -52,7 +52,7 @@
 #define FXAC_ID_FUNCTIONALENTITYTYPE     4
 
 #define NS_LOCAL 1
-#define LDS_URL          "opc.tcp://192.168.17.143:4840"
+#define LDS_URL          "opc.tcp://192.168.17.112:4840"
 #define SERVER_PUBLIC_URL "opc.tcp://edge-up-4:4941"
 #define APPLICATION_URI "urn:example:uafx:density-sensor-1"
 
@@ -61,13 +61,15 @@ static UA_NodeId readerGroupIdent;
 static UA_ClientConfig *sksClientConfigGlobal = NULL;
 static char *sksServerUrl = NULL;
 
+typedef struct {
+    CliOptions *opts;
+    clientCreds *creds;
+} SubscriberContext;
+
 static void stopHandler(int sig) {
     printf("\n[SERVER] Shutdown signal received\n");
     running = false;
 }
-
-
-
 
 static void
 sksPullRequestCallback(UA_Server *server, UA_StatusCode sksPullRequestStatus,
@@ -282,7 +284,7 @@ static void buildNetworkInterfaces(UA_Server *server) {
     printf("[SERVER]   ChassisId (shared): 00:07:32:ae:79:1d\n\n");
 }
 
-static void setupSubscriber(UA_Server *server, CliOptions *opts) {
+static void setupSubscriber(UA_Server *server, SubscriberContext *subContext) {
     printf("[SERVER] Setting up PubSub Subscriber...\n");
 
     /* ─── 1. PubSubConnection (stessa multicast del publisher) ── */
@@ -294,8 +296,8 @@ static void setupSubscriber(UA_Server *server, CliOptions *opts) {
     connConfig.enabled = true;
 
     UA_NetworkAddressUrlDataType addr;
-    addr.networkInterface = UA_STRING(opts->iface);
-    addr.url = UA_STRING(opts->url);
+    addr.networkInterface = UA_STRING(subContext->opts->iface);
+    addr.url = UA_STRING(subContext->opts->url);
 
     UA_Variant_setScalar(&connConfig.address, &addr,
                          &UA_TYPES[UA_TYPES_NETWORKADDRESSURLDATATYPE]);
@@ -317,7 +319,7 @@ static void setupSubscriber(UA_Server *server, CliOptions *opts) {
     memset(&rgConfig, 0, sizeof(rgConfig));
     rgConfig.name = UA_STRING("TemperatureReaderGroup");
 
-    if (opts->sks) {
+    if (subContext->opts->sks) {
         UA_ServerConfig *config = UA_Server_getConfig(server);
         rgConfig.securityMode = UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
         rgConfig.securityGroupId = UA_STRING(DEMO_SECURITYGROUPNAME);
@@ -333,8 +335,8 @@ static void setupSubscriber(UA_Server *server, CliOptions *opts) {
     readerGroupIdent = rgId;
     printf("[SERVER]   + ReaderGroup\n");
     
-    if (opts->sks) {
-        sksServerUrl = resolveSksUrlFromLds(LDS_URL, SKS_APPLICATION_URI, buildCertPath(opts->certDir, "subscriber.cert.der"), buildCertPath(opts->certDir, "subscriber.key.der"), buildCertPath(opts->certDir, "crl.der"));
+    if (subContext->opts->sks) {
+        sksServerUrl = resolveSksUrlFromLds(subContext->creds);
         if (sksServerUrl) {
             printf("[INFO] SKS server URL found in LDS: %s\n", sksServerUrl);
         } else {
@@ -412,7 +414,7 @@ static void setupSubscriber(UA_Server *server, CliOptions *opts) {
 
     UA_Server_enableDataSetReader(server, dsrId);
     UA_Server_enablePubSubConnection(server, connId);
-    if (!opts->sks)
+    if (!subContext->opts->sks)
         UA_Server_setReaderGroupOperational(server, rgId);
 }
 
@@ -426,11 +428,11 @@ static UA_StatusCode startSubscriberCallback(
         const UA_Variant *input, size_t outputSize,
         UA_Variant *output) {
 
-    CliOptions *contextOptions = (CliOptions *)(methodContext);
+    SubscriberContext *subContext = (SubscriberContext *)(methodContext);
     printf("[SERVER] StartSubscriber called — configuring PubSub...\n");
 
     /* chiama le funzioni già scritte nel server */
-    setupSubscriber(server, contextOptions);
+    setupSubscriber(server, subContext);
 
     printf("[SERVER] Subscriber started\n");
     return UA_STATUSCODE_GOOD;
@@ -458,7 +460,7 @@ static UA_StatusCode startSubscriberCallback(
  *                   +-- RemoteSystem_1/ (RELY-10TSN12)
  * ═══════════════════════════════════════════════════════════ */
 
-static void buildUAFXAddressSpace(UA_Server *server, CliOptions optContext) {
+static void buildUAFXAddressSpace(UA_Server *server, SubscriberContext subContext) {
     printf("[SERVER] Building UAFX AddressSpace...\n");
 
     UA_UInt16 nsFxAc = resolveNamespaceIndex(server, FXAC_NS_URI);
@@ -493,7 +495,7 @@ static void buildUAFXAddressSpace(UA_Server *server, CliOptions optContext) {
     UA_Server_addMethodNode(server, UA_NODEID_NULL, acNode,
         UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
         qn(NS_LOCAL, "StartSubscriber"), methAttr,
-        startSubscriberCallback, 0, NULL, 0, NULL, &optContext, NULL);
+        startSubscriberCallback, 0, NULL, 0, NULL, &subContext, NULL);
 
     /* ─── 3. Assets/ — usa cartella istanziata dal tipo ─────── */
     UA_NodeId assetsFolder = resolveChildByNameServer(server, acNode, "Assets");
@@ -533,7 +535,7 @@ static void buildUAFXAddressSpace(UA_Server *server, CliOptions optContext) {
     printf("[SERVER]     + OutputData/Density\n");
 
     UA_NodeId inputFolder = addFolder(server, feNode, NS_LOCAL, "InputData");
-    addInputVariable(server, inputFolder, NS_LOCAL, "Temperature", optContext.rtLog);
+    addInputVariable(server, inputFolder, NS_LOCAL, "Temperature", subContext.opts->rtLog);
     printf("[SERVER]     + InputData/Temperature\n");
 
     addFolder(server, feNode, NS_LOCAL, "ConnectionEndpoints");
@@ -566,6 +568,9 @@ int main(int argc, char **argv) {
 
     if (opts.rt)
         lockMemoryRT();
+
+    clientCreds creds;
+    loadClientCredentials(LDS_URL, opts.certDir, "subscriber", "urn:example:uafx:density-sensor-1", &creds);
 
     /* ─── Crea server ────────────────────────────────────────── */
     UA_Server *server = UA_Server_new();
@@ -627,7 +632,7 @@ int main(int argc, char **argv) {
             UA_Server_delete(server);
             return EXIT_FAILURE;
         }
-        sksClientConfigGlobal = encryptedSksClient(APPLICATION_URI, subCert, subKey, loadFile(buildCertPath(opts.certDir, "sks_server.cert.der")), crl);
+        sksClientConfigGlobal = encryptedSksClient(&creds);
         UA_ByteString_clear(&subCert);
         UA_ByteString_clear(&subKey);
     }
@@ -676,11 +681,14 @@ int main(int argc, char **argv) {
         printf("[SERVER] + UAFX types loaded perfectly\n\n");
     }
 
+    SubscriberContext subContext;
+    subContext.opts = &opts;
+    subContext.creds = &creds;
     /* ─── Costruisci AddressSpace ────────────────────────────── */
-    buildUAFXAddressSpace(server, opts);
+    buildUAFXAddressSpace(server, subContext);
 
     if (opts.autostart)
-        setupSubscriber(server, &opts);
+        setupSubscriber(server, &subContext);
 
     /* ─── Avvia server ───────────────────────────────────────── */
     retval = UA_Server_run_startup(server);
@@ -695,15 +703,7 @@ int main(int argc, char **argv) {
 
 
     /* ─── Registrazione all'LDS ──────────────────────────────── */
-    UA_StatusCode rc = registerToLdsSecurely(
-        server, 
-        LDS_URL, 
-        buildCertPath(opts.certDir, "lds_server.cert.der"),
-        buildCertPath(opts.certDir, "subscriber.cert.der"), 
-        buildCertPath(opts.certDir, "subscriber.key.der"), 
-        buildCertPath(opts.certDir, "crl.der"), 
-        APPLICATION_URI
-    );
+    UA_StatusCode rc = registerToLdsSecurely(server, &creds);
     if(rc != UA_STATUSCODE_GOOD) {
         printf("[WARNING] Shared LDS registration init failed: %s\n", UA_StatusCode_name(rc));
     }
@@ -745,6 +745,7 @@ int main(int argc, char **argv) {
     printf("\n[SERVER] Shutting down...\n");
     UA_Server_run_shutdown(server);
     UA_Server_delete(server);
+    clearClientCredentials(&creds);
     printf("[SERVER] Stopped cleanly\n\n");
 
     return EXIT_SUCCESS;

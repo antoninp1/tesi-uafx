@@ -43,7 +43,7 @@
 #define DEMO_MAXFUTUREKEYCOUNT 2
 #define DEMO_MAXPASTKEYCOUNT 2
 
-#define LDS_URL "opc.tcp://192.168.17.143:4840"
+#define LDS_URL "opc.tcp://192.168.17.112:4840"
 #define LDS_REREGISTER_INTERVAL_MS 30000.0
 
 static volatile UA_Boolean running = true;
@@ -117,27 +117,15 @@ main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    UA_ByteString crl = loadFile(buildCertPath(argv[1], "crl.der"));
-    UA_ByteString caCert = loadFile(buildCertPath(argv[1], "ca.cert.der"));
-    UA_ByteString certificate = loadFile(buildCertPath(argv[1], "sks_server.cert.der"));
-    UA_ByteString privateKey = loadFile(buildCertPath(argv[1], "sks_server.key.der"));
-
-    if(certificate.length == 0 || privateKey.length == 0) {
-        UA_LOG_FATAL(UA_Log_Stdout, UA_LOGCATEGORY_SERVER,
-                     "Unable to load server certificate/key");
-        return EXIT_FAILURE;
-    }
+    clientCreds creds;
+    loadClientCredentials(LDS_URL, argv[1], "sks_server", "urn:example:uafx:sks-server", &creds);
 
     UA_UInt16 port = 4850;
 
     UA_ServerConfig config;
     memset(&config, 0, sizeof(UA_ServerConfig));
 
-    UA_StatusCode res = UA_ServerConfig_setDefaultWithSecurityPolicies(
-        &config, port, &certificate, &privateKey,
-        &caCert, 1,
-        NULL, 0,   /* issuerList */
-        &crl, 1);  /* revocationList */
+    UA_StatusCode res = UA_ServerConfig_setDefaultWithSecurityPolicies(&config, port, &creds.clientCert, &creds.clientKey, &creds.caCert, 1, NULL, 0, &creds.crl, 1);
     if(res != UA_STATUSCODE_GOOD) {
         UA_LOG_FATAL(UA_Log_Stdout, UA_LOGCATEGORY_SERVER,
                      "ServerConfig setup failed: %s", UA_StatusCode_name(res));
@@ -205,8 +193,7 @@ main(int argc, char **argv) {
     //registerToLdsSecurely(server, LDS_URL, argv[3], argv[1], argv[2], "urn:example:uafx:sks-server");
     UA_UInt64 ldsRegisterCallbackId = 0;
     void *ldsRegisterCtx = NULL;
-    startPeriodicLdsRegistration(server, LDS_URL, buildCertPath(argv[1], "ca.cert.der"), buildCertPath(argv[1], "sks_server.cert.der"), buildCertPath(argv[1], "sks_server.key.der"), buildCertPath(argv[1], "crl.der"), "urn:example:uafx:sks-server", 5*60*1000.0,
-                             &ldsRegisterCallbackId, &ldsRegisterCtx);
+    startPeriodicLdsRegistration(server, &creds, 5*60*1000.0, &ldsRegisterCallbackId, &ldsRegisterCtx);
 
     
     while (running)
@@ -216,10 +203,6 @@ main(int argc, char **argv) {
     retval = UA_Server_run_shutdown(server);
     stopPeriodicLdsRegistration(server, ldsRegisterCallbackId, ldsRegisterCtx);
     UA_Server_delete(server);
-    UA_ByteString_clear(&certificate);
-    UA_ByteString_clear(&privateKey);
-    UA_ByteString_clear(&caCert);
-    UA_ByteString_clear(&crl);
-
+    clearClientCredentials(&creds);
     return retval == UA_STATUSCODE_GOOD ? EXIT_SUCCESS : EXIT_FAILURE;
 }

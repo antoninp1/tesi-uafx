@@ -1,18 +1,29 @@
 #include <open62541/server.h>
 #include <open62541/client_config_default.h>
 
+typedef struct {
+    char * ldsUrl;
+    UA_ByteString caCert;
+    UA_ByteString crl;
+    UA_ByteString clientCert;
+    UA_ByteString clientKey;
+    UA_String applicationUri;
+} clientCreds;
+
+
+UA_StatusCode loadClientCredentials(const char *ldsUrl, const char *certDir, const char *deviceName, const char *applicationUri, clientCreds *out);
+
+void clearClientCredentials(clientCreds *creds);
+
 UA_ByteString loadFile(const char *const path);
 
-UA_ClientConfig *encryptedSksClient(const char *applicationUri, UA_ByteString certificate, UA_ByteString privateKey, UA_ByteString sksCert, UA_ByteString crl);
+UA_ClientConfig *encryptedSksClient(clientCreds *creds);
 
-UA_StatusCode registerToLdsSecurely(UA_Server *server, const char *ldsUrl, const char * ldsCertPath,
-                         const char *clientCertPath, const char *clientKeyPath, const char *crlPath,
-                         const char *applicationUri);
+UA_StatusCode registerToLdsSecurely(UA_Server *server, clientCreds *creds);
 
 void disableAnonymous(UA_ServerConfig *config);
 
-char *resolveSksUrlFromLds(const char *ldsUrl, const char *sksApplicationUri,
-                           const char *clientCertPath, const char *clientKeyPath, const char *crlPath);
+char *resolveSksUrlFromLds(clientCreds *creds);
 
 char *buildCertPath(const char *certDir, const char *filename);
 
@@ -37,12 +48,7 @@ getUserExecutableOnObject_app(UA_Server *server, UA_AccessControl *ac,
 
 UA_StatusCode
 startPeriodicLdsRegistration(UA_Server *server,
-                             const char *ldsUrl,
-                             const char *caCertPath,
-                             const char *clientCertPath,
-                             const char *clientKeyPath,
-                             const char *crlPath,
-                             const char *applicationUri,
+                             clientCreds *creds,
                              UA_Double intervalMs,
                              UA_UInt64 *callbackId, 
                              void **ctxOut);

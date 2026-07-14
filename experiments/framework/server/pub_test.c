@@ -43,7 +43,7 @@
 /* ─── Namespace index di FX/AC nel server ─────────────────── */
 #define FXAC_NS_URI   "http://opcfoundation.org/UA/FX/AC/"
 
-#define SKS_SERVER_URL_FALLBACK         "opc.tcp://192.168.17.143:4850"
+#define SKS_SERVER_URL_FALLBACK         "opc.tcp://192.168.17.112:4850"
 #define SKS_APPLICATION_URI     "urn:example:uafx:sks-server"
 #define DEMO_SECURITYGROUPNAME  "UafxSecurityGroup"
 
@@ -53,7 +53,7 @@
 #define FXAC_ID_FUNCTIONALENTITYTYPE     4
 
 #define NS_LOCAL 1
-#define LDS_URL          "opc.tcp://192.168.17.143:4840"
+#define LDS_URL          "opc.tcp://192.168.17.112:4840"
 #define SERVER_PUBLIC_URL "opc.tcp://edge-up-3:4941"
 #define APPLICATION_URI "urn:example:uafx:temperature-sensor-1"
 
@@ -504,6 +504,9 @@ int main(int argc, char **argv) {
     if (opts.rt)
         lockMemoryRT();
 
+    clientCreds creds;
+    loadClientCredentials(opts.ldsUrl, opts.certDir, "publisher", "urn:example:uafx:temperature-sensor-1", &creds);
+
     /* ─── Crea server ────────────────────────────────────────── */
     UA_Server *server = UA_Server_new();
     UA_ServerConfig *config = UA_Server_getConfig(server);
@@ -569,14 +572,15 @@ int main(int argc, char **argv) {
         UA_Server_delete(server);
         return EXIT_FAILURE;
     }
-    sksClientConfigGlobal = encryptedSksClient(APPLICATION_URI, pubCert, pubKey, loadFile(buildCertPath(opts.certDir, "sks_server.cert.der")), crl);
+    //sksClientConfigGlobal = encryptedSksClient(APPLICATION_URI, pubCert, pubKey, loadFile(buildCertPath(opts.certDir, "ca.cert.der")), crl);
+    sksClientConfigGlobal = encryptedSksClient(&creds);
     UA_ByteString_clear(&pubCert);
     UA_ByteString_clear(&pubKey);
     }
 
 
     UA_String_clear(&config->applicationDescription.applicationUri);
-    config->applicationDescription.applicationUri = UA_String_fromChars(APPLICATION_URI);
+    config->applicationDescription.applicationUri = creds.applicationUri;
 
     UA_LocalizedText_clear(&config->applicationDescription.applicationName);
     config->applicationDescription.applicationName =
@@ -634,7 +638,7 @@ int main(int argc, char **argv) {
         addPubSubConnection(server, &transportProfile, &networkAddressUrl);
         addPublishedDataSet(server);
         addDataSetField(server);
-        sksServerUrl = resolveSksUrlFromLds(LDS_URL, SKS_APPLICATION_URI, buildCertPath(opts.certDir, "publisher.cert.der"), buildCertPath(opts.certDir, "publisher.key.der"), buildCertPath(opts.certDir, "crl.der"));
+        sksServerUrl = resolveSksUrlFromLds(&creds);
         if (sksServerUrl) {
             printf("[INFO] SKS server URL found in LDS: %s\n", sksServerUrl);
         } else {
@@ -651,15 +655,7 @@ int main(int argc, char **argv) {
     }
 
     /* ─── Registrazione all'LDS ──────────────────────────────── */
-    UA_StatusCode rc = registerToLdsSecurely(
-        server,
-        LDS_URL,
-        buildCertPath(opts.certDir, "lds_server.cert.der"),
-        buildCertPath(opts.certDir, "publisher.cert.der"),
-        buildCertPath(opts.certDir, "publisher.key.der"),
-        buildCertPath(opts.certDir, "crl.der"),
-        APPLICATION_URI
-    );
+    UA_StatusCode rc = registerToLdsSecurely(server, &creds);
     if(rc != UA_STATUSCODE_GOOD) {
         printf("[WARNING] Shared LDS registration init failed: %s\n", UA_StatusCode_name(rc));
     }
