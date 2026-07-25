@@ -1,15 +1,15 @@
 /* ============================================================
  * uafx_temperature_server.c
  *
- * Server OPC UA FX con tipi UAFX corretti:
- *   - AutomationComponent istanziato come AutomationComponentType (ns=FX/AC; i=2)
- *   - Asset istanziato come FxAssetType                           (ns=FX/AC; i=3)
- *   - FunctionalEntity istanziata come FunctionalEntityType       (ns=FX/AC; i=4)
+ * OPC UA FX server with correctly typed UAFX nodes:
+ *   - AutomationComponent instantiated as AutomationComponentType (ns=FX/AC; i=2)
+ *   - Asset instantiated as FxAssetType                           (ns=FX/AC; i=3)
+ *   - FunctionalEntity instantiated as FunctionalEntityType       (ns=FX/AC; i=4)
  *
- * Include NetworkInterfaces con dati LLDP per topology discovery
- * secondo OPC 10000-82 sezione 6.5.2 e 7.3.2.
+ * Includes NetworkInterfaces with LLDP data for topology discovery
+ * per OPC 10000-82 sections 6.5.2 and 7.3.2.
  *
- * Compilazione:
+ * Build:
  *   gcc -o temp_server uafx_temperature_server.c my_uafx_types.c open62541.c -pthread
  * ============================================================ */
 
@@ -40,14 +40,14 @@
 #include "uafx_common.h"
 
 
-/* ─── Namespace index di FX/AC nel server ─────────────────── */
+/* ─── FX/AC namespace index in the server ─────────────────── */
 #define FXAC_NS_URI   "http://opcfoundation.org/UA/FX/AC/"
 
 #define SKS_SERVER_URL_FALLBACK         "opc.tcp://192.168.17.112:4850"
 #define SKS_APPLICATION_URI     "urn:example:uafx:sks-server"
 #define DEMO_SECURITYGROUPNAME  "UafxSecurityGroup"
 
-/* NodeId dei tipi UAFX (numeric id fisso da nodeset XML) */
+/* NodeIds of the UAFX types (fixed numeric id from the nodeset XML) */
 #define FXAC_ID_AUTOMATIONCOMPONENTTYPE  2
 #define FXAC_ID_FXASSETTYPE              3
 #define FXAC_ID_FUNCTIONALENTITYTYPE     4
@@ -97,6 +97,8 @@ static struct timespec lastTrigger = {0};
 
 static void
 writerGroupPublishTrigger(union sigval signal) {
+    /* Skip publishing until the SKS key is active, so no cleartext
+     * or under-encrypted message goes out before the key handshake completes. */
     if (!__atomic_load_n(&sksKeyActive, __ATOMIC_SEQ_CST))
         return;
     struct timespec now;
@@ -110,6 +112,9 @@ writerGroupPublishTrigger(union sigval signal) {
     UA_Server_triggerWriterGroupPublish(server, writerGroupIdent);
 }
 
+/* Custom state machine: drives publishing via a POSIX CLOCK_TAI timer
+ * (writerGroupPublishTrigger) instead of open62541's default eventloop
+ * timer, for tighter RT jitter control. */
 static UA_StatusCode
 writerGroupStateMachine(UA_Server *server, const UA_NodeId componentId,
                         void *componentContext, UA_PubSubState *state,
@@ -125,7 +130,7 @@ writerGroupStateMachine(UA_Server *server, const UA_NodeId componentId,
         case UA_PUBSUBSTATE_ERROR:
         case UA_PUBSUBSTATE_DISABLED:
         case UA_PUBSUBSTATE_PAUSED:
-            timer_settime(writerGroupTimer, 0, &interval, NULL); /* interval=0 -> arrêt */
+            timer_settime(writerGroupTimer, 0, &interval, NULL); /* interval=0 -> stop */
             *state = targetState;
             break;
 
@@ -199,6 +204,8 @@ static UA_NodeId addTemperatureVariable(UA_Server *server, UA_NodeId parent,
                           &UA_TYPES[UA_TYPES_FLOAT]);
     temperatureDataValueRT->hasValue = true;
 
+    /* External value source: lets the RT loop update the value in place,
+     * without going through the server's read callback/lock path. */
     UA_StatusCode retval = UA_Server_setVariableNode_externalValueSource(server, newNode, &temperatureDataValueRT, NULL);
     if (retval != UA_STATUSCODE_GOOD) {
         printf("[ERROR] externalValueSource failed: %s\n", UA_StatusCode_name(retval));
@@ -212,13 +219,13 @@ static UA_NodeId addTemperatureVariable(UA_Server *server, UA_NodeId parent,
 /* ═══════════════════════════════════════════════════════════
  * Build NetworkInterfaces with LLDP data
  *
- * Secondo OPC 10000-82 sezione 6.5.2:
- * - NetworkInterfaces/ folder sotto Objects
- * - Ogni interfaccia fisica come oggetto con proprieta'
- *   IetfBaseNetworkInterfaceType-like (AdminStatus, PhysAddress, Speed)
- * - LldpData/ con i dati dei vicini LLDP (Part 82, 7.3.2)
+ * Per OPC 10000-82 section 6.5.2:
+ * - NetworkInterfaces/ folder under Objects
+ * - Each physical interface as an object with
+ *   IetfBaseNetworkInterfaceType-like properties (AdminStatus, PhysAddress, Speed)
+ * - LldpData/ holding LLDP neighbor data (Part 82, 7.3.2)
  *
- * Struttura:
+ * Layout:
  * Objects/
  * +-- NetworkInterfaces/
  *     +-- enp0s31f6/
@@ -329,8 +336,7 @@ static void buildNetworkInterfaces(UA_Server *server) {
 }
 
 
-/* -----7. Pub Static implementation exemple  */
-	//addPubSubCOnnections
+/* ─── 7. Static PubSub setup example ─── */
     static void addPubSubConnection(UA_Server *server, UA_String *transportProfile,
                     UA_NetworkAddressUrlDataType *networkAddressUrl){
       UA_PubSubConnectionConfig connectionConfig;
@@ -350,6 +356,8 @@ static void buildNetworkInterfaces(UA_Server *server) {
         UA_KeyValueMap_setScalar(&connectionConfig.connectionProperties,
                 UA_QUALIFIEDNAME(0, "txtime-enable"), &disableSoTxtime, &UA_TYPES[UA_TYPES_BOOLEAN]);
 
+	    /* Created disabled — enabled later by StartPublisher/autostart, once the
+	     * WriterGroup and DataSetWriter are wired up. */
 	    connectionConfig.enabled = false;
     	UA_Server_addPubSubConnection(server, &connectionConfig, &connectionIdent);
 
@@ -414,6 +422,9 @@ static void addWriterGroup(UA_Server *server, void *context) {
                                            UA_UADPNETWORKMESSAGECONTENTMASK_TIMESTAMP);
 
     static UA_Double publishingOffsetValue;
+    /* Offset (ms) into the cycle at which the message is actually sent, leaving
+     * headroom before the next cycle deadline. Fixed value; commented-out
+     * expression is the cycle-relative alternative that was tried instead. */
     publishingOffsetValue = 0.05; //(pubContext->opts->cycleTime / 1000000.0) * 0.6;
     writerGroupMessage.publishingOffset = &publishingOffsetValue;
     writerGroupMessage.publishingOffsetSize = 1;
@@ -519,7 +530,7 @@ static void buildUAFXAddressSpace(UA_Server *server, PubSubCtx *pubContext) {
     UA_NodeId objectsFolder = UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER);
     UA_NodeId fxRoot = addFolder(server, objectsFolder, nsFxAc, "FxRoot");
 
-    /* Crea AC — questo istanzia automaticamente Assets/, FunctionalEntities/, ecc. */
+    /* Create the AC — this automatically instantiates Assets/, FunctionalEntities/, etc. */
     UA_NodeId acNode = addTypedObject(server, fxRoot,
                                       NS_LOCAL, "TemperatureSensor",
                                       "Temperature Sensor AutomationComponent",
@@ -529,7 +540,7 @@ static void buildUAFXAddressSpace(UA_Server *server, PubSubCtx *pubContext) {
                       "urn:example:uafx:temperature-sensor:v1.0");
     addUInt32Variable(server, acNode, NS_LOCAL, "AggregatedHealth", 0);
 
-    /* Aggiunta metodi */
+    /* Add methods */
     UA_MethodAttributes methAttr = UA_MethodAttributes_default;
     methAttr.displayName = lt("StartPublisher");
     methAttr.executable = true;
@@ -540,7 +551,7 @@ static void buildUAFXAddressSpace(UA_Server *server, PubSubCtx *pubContext) {
         startPublisherCallback, 0, NULL, 0, NULL, pubContext, NULL);
     registerEstablishConnectionsMethod(server, acNode);
 
-    /* ── Trova Assets/ già creata dal tipo e popolala ── */
+    /* ── Find Assets/ already created by the type and populate it ── */
     UA_NodeId assetsFolder = resolveChildByNameServer(server, acNode, "Assets");
     UA_NodeId assetNode = addTypedObject(server, assetsFolder,
                                          NS_LOCAL, "SensorHardware",
@@ -555,7 +566,7 @@ static void buildUAFXAddressSpace(UA_Server *server, PubSubCtx *pubContext) {
     addStringVariable(server, assetNode, NS_LOCAL, "DeviceClass",       "TemperatureSensor");
     addStringVariable(server, assetNode, NS_LOCAL, "SerialNumber",      "SN-12345-ABCD");
 
-    /* ── Trova FunctionalEntities/ già creata dal tipo e popolala ── */
+    /* ── Find FunctionalEntities/ already created by the type and populate it ── */
     UA_NodeId feFolder = resolveChildByNameServer(server, acNode, "FunctionalEntities");
     UA_NodeId feNode = addTypedObject(server, feFolder,
                                       NS_LOCAL, "TemperatureReadingFE",
@@ -569,7 +580,7 @@ static void buildUAFXAddressSpace(UA_Server *server, PubSubCtx *pubContext) {
                       "1.0.0.0");
     addUInt32Variable(server, feNode, NS_LOCAL, "OperationalHealth", 0);
 
-    /* ── Trova OutputData/ già creata dall'istanziazione di FunctionalEntityType ── */
+    /* ── Find OutputData/ already created by the FunctionalEntityType instantiation ── */
 UA_NodeId outputFolder = addFolder(server, feNode, NS_LOCAL, "OutputData");
     temperatureNodeId = addTemperatureVariable(server, outputFolder, NS_LOCAL, "Temperature");
 
@@ -579,14 +590,14 @@ UA_NodeId outputFolder = addFolder(server, feNode, NS_LOCAL, "OutputData");
 
     addFolder(server, feNode, NS_LOCAL, "ConnectionEndpoints");
 
-    /* ───  ComponentCapabilities/ ──────────────────────────── */
+    /* ─── ComponentCapabilities/ ──────────────────────────── */
     UA_NodeId capFolder = addFolder(server, acNode, NS_LOCAL, "ComponentCapabilities");
     addUInt32Variable(server, capFolder, NS_LOCAL, "MaxConnections", 4);
     addUInt32Variable(server, capFolder, NS_LOCAL, "MinConnections", 0);
 
     printf("[SERVER] + UAFX AddressSpace build complete\n\n");
 
-    /* ─── 6. NetworkInterfaces con LLDP (Part 82, 6.5.2) ────── */
+    /* ─── 6. NetworkInterfaces with LLDP (Part 82, 6.5.2) ────── */
     buildNetworkInterfaces(server);
 
 }
@@ -642,12 +653,15 @@ int main(int argc, char **argv) {
     sigev.sigev_notify_function = writerGroupPublishTrigger;
     timer_create(CLOCKID, &sigev, &writerGroupTimer);
 
-    /* ─── Crea server ────────────────────────────────────────── */
+    /* ─── Create server ────────────────────────────────────────── */
     server = UA_Server_new();
     UA_ServerConfig *config = UA_Server_getConfig(server);
      transportProfile = UA_STRING("http://opcfoundation.org/UA-Profile/Transport/pubsub-eth-uadp");
      networkAddressUrl.networkInterface = UA_STRING(opts.iface);
     networkAddressUrl.url = UA_STRING(opts.url);
+    /* UA_DataTypeArray is a singly linked list (each node's first field points
+     * to the next); chain AC -> Data -> DI so the server can decode all three
+     * custom type sets. */
     static UA_DataTypeArray customDataTypesAC = {
         NULL,
         UA_TYPES_UAFX_AC_COUNT,
@@ -675,6 +689,8 @@ int main(int argc, char **argv) {
 
     UA_ServerConfig_setDefaultWithSecurityPolicies(config, 4941, &serverCert, &serverKey, &creds.caCert, 1, &creds.crl, 1, NULL, 0);
 
+    /* Point the eventloop's "monotonic" clock at CLOCK_TAI so its timestamps
+     * stay aligned with the CLOCKID used for PubSub publish scheduling. */
     UA_KeyValueMap_setScalar(&config->eventLoop->params, UA_QUALIFIEDNAME(0, "clock-source-monotonic"), &clockSource, &UA_TYPES[UA_TYPES_INT32]);
 
     /* AccessControl: X.509 certificate authentication + restrict
@@ -731,7 +747,7 @@ int main(int argc, char **argv) {
     printf("[SERVER] mDNS Discovery: DISABLED\n\n");
 #endif*/
 
-    /* ─── Carica i tipi UAFX dal nodeset generato ────────────── */
+    /* ─── Load UAFX types from the generated nodeset ────────── */
     printf("[SERVER] Loading UAFX nodesets...\n");
     UA_StatusCode retval = namespace_di_generated(server);
     UA_StatusCode retval_data = namespace_uafx_data_generated(server);
@@ -748,11 +764,11 @@ int main(int argc, char **argv) {
     PubSubCtx pubContext;
     pubContext.opts = &opts;
     pubContext.creds = &creds;
-    /* ─── Costruisci AddressSpace ────────────────────────────── */
+    /* ─── Build AddressSpace ────────────────────────────── */
     buildUAFXAddressSpace(server, &pubContext);
 
 
-    /* ─── Avvia server ───────────────────────────────────────── */
+    /* ─── Start server ───────────────────────────────────────── */
     retval = UA_Server_run_startup(server);
     if(retval != UA_STATUSCODE_GOOD) {
         printf("[ERROR] Server startup failed: %s\n",
@@ -781,7 +797,7 @@ int main(int argc, char **argv) {
         printf("[SERVER] Publisher started automatically\n");
     }
 
-    /* ─── Registrazione all'LDS ──────────────────────────────── */
+    /* ─── LDS registration ──────────────────────────────── */
     /*UA_StatusCode rc = registerToLdsSecurely(server, &creds);
     if(rc != UA_STATUSCODE_GOOD) {
         printf("[WARNING] Shared LDS registration init failed: %s\n", UA_StatusCode_name(rc));
@@ -813,8 +829,11 @@ int main(int argc, char **argv) {
     printf("========================================================\n");
     printf("Press Ctrl+C to stop\n\n");
 
-    /* ─── Loop principale ────────────────────────────────────── */
+    /* ─── Main loop ────────────────────────────────────── */
     if (opts.rt) {
+        /* Absolute-time (TIMER_ABSTIME) sleeps to an accumulated deadline
+         * rather than sleeping cycleTime relative to "now", so per-cycle
+         * scheduling/processing jitter doesn't accumulate drift over time. */
         struct timespec next;
         clock_gettime(CLOCKID, &next);
         while(running) {

@@ -1,25 +1,28 @@
 /* ============================================================
  * lds_server.c
  *
- * Local Discovery Server (LDS) per OPC UA FX
+ * Local Discovery Server (LDS) for OPC UA FX
  *
- * Funziona come punto di rendezvous per tutti i server UAFX
- * presenti sulla rete. I server si registrano periodicamente
- * tramite UA_Server_addPeriodicServerRegisterCallback().
- * I client si connettono all'LDS via TCP (funziona su VPN)
- * e chiamano FindServers() per ottenere la lista dei server.
+ * Acts as the rendezvous point for all UAFX servers on the
+ * network. Servers register periodically via
+ * UA_Server_addPeriodicServerRegisterCallback(). Clients connect
+ * to the LDS over TCP (works over VPN) and call FindServers() to
+ * get the list of servers.
  *
- * Requisiti:
- *   open62541 compilato con:
+ * Requirements:
+ *   open62541 built with:
  *     -DUA_ENABLE_DISCOVERY=ON
- *     -DUA_ENABLE_DISCOVERY_MULTICAST=ON  (opzionale, per rete locale)
+ *     -DUA_ENABLE_DISCOVERY_MULTICAST=ON  (optional, for the local network)
  *
- * Compilazione:
+ * Build:
  *   gcc -o lds_server lds_server.c open62541.c -pthread
  *
- * Utilizzo:
- *   ./lds_server              → porta 4840 (default LDS standard)
- *   ./lds_server 4840         → porta esplicita
+ * Usage:
+ *   ./lds_server <cert-dir>              → port 4840 (standard LDS default)
+ *   ./lds_server <cert-dir> <port>       → explicit port
+ *
+ * <cert-dir> must contain lds_server.cert.der, lds_server.key.der,
+ * ca.cert.der and crl.der (see buildCertPath() in sks_helpers.c).
  * ============================================================ */
 
 #include <open62541/server.h>
@@ -33,13 +36,13 @@
 
 #include "sks_helpers.h"
 
-/* ─── Configurazione ─────────────────────────────────────── */
+/* ─── Configuration ─────────────────────────────────────── */
 #define LDS_DEFAULT_PORT    4840
 #define LDS_APPLICATION_URI "urn:example:uafx:lds"
 
-/* Timeout: un server viene rimosso dal registro se non si
- * ri-registra entro questo intervallo (ms). */
-#define LDS_SERVER_TIMEOUT_MS  60000   /* 60 secondi */
+/* Timeout: a server is dropped from the registry if it doesn't
+ * re-register within this interval (ms). */
+#define LDS_SERVER_TIMEOUT_MS  60000   /* 60 seconds */
 
 #define LDS_SERVER_IP_ADDR "192.168.17.112"
 
@@ -52,10 +55,10 @@ static void stopHandler(int sig) {
 }
 
 /* ============================================================
- * Callback: server scoperto via mDNS (se abilitato)
+ * Callback: server discovered via mDNS (when enabled)
  *
- * Permette all'LDS di scoprire autonomamente server sulla
- * rete locale tramite mDNS, senza aspettare la registrazione.
+ * Lets the LDS autonomously discover servers on the local
+ * network via mDNS, without waiting for their registration.
  * ============================================================ */
 #ifdef UA_ENABLE_DISCOVERY_MULTICAST
 static void
@@ -80,7 +83,7 @@ int main(int argc, char **argv) {
     signal(SIGINT,  stopHandler);
     signal(SIGTERM, stopHandler);
 
-    /* Porta da riga di comando (opzionale) */
+    /* Port from the command line (optional) */
     UA_UInt16 port = LDS_DEFAULT_PORT;
     if(argc >= 3) {
         int p = atoi(argv[2]);
@@ -100,7 +103,7 @@ int main(int argc, char **argv) {
     printf("[LDS] Porta: %d\n", port);
     printf("[LDS] Timeout server inattivi: %d ms\n\n", LDS_SERVER_TIMEOUT_MS);
 
-    /* ─── Creazione server ───────────────────────────────────── */
+    /* ─── Create server ───────────────────────────────────── */
     //UA_Server *server = UA_Server_new();
     UA_ServerConfig config;
     memset(&config, 0, sizeof(UA_ServerConfig));
@@ -117,7 +120,7 @@ int main(int argc, char **argv) {
     config.mdnsConfig.serverCapabilitiesSize = 0;
 
 
-    // Specifica gli IP delle interfacce su cui fare mDNS
+    // Specify the interface IPs to run mDNS on
     /*
     UA_UInt32 mdnsIPs[2];
     mdnsIPs[0] = inet_addr("192.168.17.92");
@@ -125,21 +128,21 @@ int main(int argc, char **argv) {
     config->mdnsIpAddressList = mdnsIPs;
     config->mdnsIpAddressListSize = 2;*/
     config.mdnsInterfaceIP = UA_String_fromChars(LDS_SERVER_IP_ADDR);
-    /* ─── Identità applicazione ──────────────────────────────── */
+    /* ─── Application identity ──────────────────────────────── */
     UA_String_clear(&config.applicationDescription.applicationUri);
     config.applicationDescription.applicationUri = UA_String_fromChars(LDS_APPLICATION_URI);
 
     UA_LocalizedText_clear(&config.applicationDescription.applicationName);
     config.applicationDescription.applicationName = UA_LOCALIZEDTEXT_ALLOC("en-US", "UAFX Local Discovery Server");
 
-    /* L'LDS si identifica come DiscoveryServer, non come Server */
+    /* The LDS identifies itself as a DiscoveryServer, not a Server */
     config.applicationDescription.applicationType = UA_APPLICATIONTYPE_DISCOVERYSERVER;
 
-    /* ─── Abilita Discovery ───────────────────────────────────── */
+    /* ─── Enable Discovery ───────────────────────────────────── */
 #ifdef UA_ENABLE_DISCOVERY
-    /* Timeout: rimuove dal registro i server che smettono
-     * di registrarsi entro LDS_SERVER_TIMEOUT_MS */
-//    config->discovery.mdnsEnable = false;   /* solo TCP per ora */
+    /* Timeout: drops servers from the registry once they stop
+     * re-registering within LDS_SERVER_TIMEOUT_MS */
+//    config->discovery.mdnsEnable = false;   /* TCP only for now */
 
 
 #else
@@ -148,7 +151,7 @@ int main(int argc, char **argv) {
     printf("      Ricompilare con -DUA_ENABLE_DISCOVERY=ON\n\n");
 #endif
 
-    /* ─── mDNS opzionale ─────────────────────────────────────── */
+    /* ─── Optional mDNS ─────────────────────────────────────── */
     /*
 #ifdef UA_ENABLE_DISCOVERY_MULTICAST
     // Disabling mDNS to avoid bad registration
@@ -163,8 +166,9 @@ int main(int argc, char **argv) {
     printf("[LDS] mDNS: DISABILITATO (solo discovery TCP/IP)\n");
 #endif*/
 
-    /* ─── Avvio ──────────────────────────────────────────────── */
+    /* ─── Startup ──────────────────────────────────────────────── */
 
+    /* Only allow encrypted endpoints (drop SecurityMode=None) */
     for(size_t i = 0; i < config.endpointsSize; i++) {
         if(config.endpoints[i].securityMode == UA_MESSAGESECURITYMODE_NONE) {
             UA_EndpointDescription_clear(&config.endpoints[i]);
@@ -202,12 +206,12 @@ int main(int argc, char **argv) {
     printf("════════════════════════════════════════════════════════\n\n");
     printf("[LDS] In attesa di registrazioni dai server UAFX...\n\n");
 
-    /* ─── Loop principale ────────────────────────────────────── */
+    /* ─── Main loop ────────────────────────────────────── */
     while(running) {
         UA_Server_run_iterate(server, true);
     }
 
-    /* ─── Shutdown ───────────────────────────────────────────── */
+    /* ─── Shutdown ────────────────────────────────────────────── */
     printf("\n[LDS] Shutdown in corso...\n");
     UA_Server_run_shutdown(server);
     UA_Server_delete(server);

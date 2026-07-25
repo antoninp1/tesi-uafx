@@ -1,15 +1,15 @@
 /* ============================================================
  * uafx_temperature_server.c
  *
- * Server OPC UA FX con tipi UAFX corretti:
- *   - AutomationComponent istanziato come AutomationComponentType (ns=FX/AC; i=2)
- *   - Asset istanziato come FxAssetType                           (ns=FX/AC; i=3)
- *   - FunctionalEntity istanziata come FunctionalEntityType       (ns=FX/AC; i=4)
+ * OPC UA FX server with correctly typed UAFX nodes:
+ *   - AutomationComponent instantiated as AutomationComponentType (ns=FX/AC; i=2)
+ *   - Asset instantiated as FxAssetType                           (ns=FX/AC; i=3)
+ *   - FunctionalEntity instantiated as FunctionalEntityType       (ns=FX/AC; i=4)
  *
- * Include NetworkInterfaces con dati LLDP per topology discovery
- * secondo OPC 10000-82 sezione 6.5.2 e 7.3.2.
+ * Includes NetworkInterfaces with LLDP data for topology discovery
+ * per OPC 10000-82 sections 6.5.2 and 7.3.2.
  *
- * Compilazione:
+ * Build:
  *   gcc -o temp_server uafx_temperature_server.c my_uafx_types.c open62541.c -pthread
  * ============================================================ */
 
@@ -39,14 +39,14 @@
 #include "sks_helpers.h"
 #include "uafx_common.h"
 
-/* ─── Namespace index di FX/AC nel server ─────────────────── */
+/* ─── FX/AC namespace index in the server ─────────────────── */
 #define FXAC_NS_URI   "http://opcfoundation.org/UA/FX/AC/"
 
 #define SKS_SERVER_URL_FALLBACK          "opc.tcp://192.168.17.112:4850"
 #define SKS_APPLICATION_URI     "urn:example:uafx:sks-server"
 #define DEMO_SECURITYGROUPNAME  "UafxSecurityGroup"
 
-/* NodeId dei tipi UAFX (numeric id fisso da nodeset XML) */
+/* NodeIds of the UAFX types (fixed numeric id from the nodeset XML) */
 #define FXAC_ID_AUTOMATIONCOMPONENTTYPE  2
 #define FXAC_ID_FXASSETTYPE              3
 #define FXAC_ID_FUNCTIONALENTITYTYPE     4
@@ -91,7 +91,7 @@ sksPullRequestCallback(UA_Server *server, UA_StatusCode sksPullRequestStatus,
  * Density Variable with Dynamic Callback
  * ═══════════════════════════════════════════════════════════ */
 
-/* Density dinamica: 998.0 ± 5.0 kg/m^3 (tipico per acqua) */
+/* Simulated density: 998.0 ± 5.0 kg/m^3 (typical for water) */
 static void readDensity(UA_Server *server, const UA_NodeId *sessionId,
                         void *sessionContext, const UA_NodeId *nodeId,
                         void *nodeContext, const UA_NumericRange *range,
@@ -166,13 +166,13 @@ return receivedTempNodeId;
 /* ═══════════════════════════════════════════════════════════
  * Build NetworkInterfaces with LLDP data
  *
- * Secondo OPC 10000-82 sezione 6.5.2:
- * - NetworkInterfaces/ folder sotto Objects
- * - Ogni interfaccia fisica come oggetto con proprieta'
- *   IetfBaseNetworkInterfaceType-like (AdminStatus, PhysAddress, Speed)
- * - LldpData/ con i dati dei vicini LLDP (Part 82, 7.3.2)
+ * Per OPC 10000-82 section 6.5.2:
+ * - NetworkInterfaces/ folder under Objects
+ * - Each physical interface as an object with
+ *   IetfBaseNetworkInterfaceType-like properties (AdminStatus, PhysAddress, Speed)
+ * - LldpData/ holding LLDP neighbor data (Part 82, 7.3.2)
  *
- * Struttura:
+ * Layout:
  * Objects/
  * +-- NetworkInterfaces/
  *     +-- enp0s31f6/
@@ -209,7 +209,7 @@ static void buildNetworkInterfaces(UA_Server *server) {
     UA_NodeId objects = UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER);
     UA_NodeId niFolder = addFolder(server, objects, NS_LOCAL, "NetworkInterfaces");
 
-    /* ============ enp43s0 → vicino edge-up-3 ============ */
+    /* ============ enp43s0 → neighbor edge-up-3 ============ */
     {
         UA_NodeId iface = addBaseObject(server, niFolder, NS_LOCAL,
                                         "enp43s0", "Physical interface enp43s0");
@@ -237,7 +237,7 @@ static void buildNetworkInterfaces(UA_Server *server) {
         addUInt32Variable(server, rs, NS_LOCAL, "TimeToLive",         120);
     }
 
-    /* ============ enp0s31f6 → vicino RELY-10TSN12 ============ */
+    /* ============ enp0s31f6 → neighbor RELY-10TSN12 ============ */
     {
         UA_NodeId iface = addBaseObject(server, niFolder, NS_LOCAL,
                                         "enp0s31f6", "Physical interface enp0s31f6");
@@ -264,7 +264,7 @@ static void buildNetworkInterfaces(UA_Server *server) {
         addUInt32Variable(server, rs, NS_LOCAL, "TimeToLive",         40);
     }
 
-    /* ============ wlp44s0 → nessun vicino ============ */
+    /* ============ wlp44s0 → no neighbor ============ */
     {
         UA_NodeId iface = addBaseObject(server, niFolder, NS_LOCAL,
                                         "wlp44s0", "Wireless interface wlp44s0");
@@ -285,7 +285,7 @@ static void buildNetworkInterfaces(UA_Server *server) {
 static void setupSubscriber(UA_Server *server, PubSubCtx *subContext) {
     printf("[SERVER] Setting up PubSub Subscriber...\n");
 
-    /* ─── 1. PubSubConnection (stessa multicast del publisher) ── */
+    /* ─── 1. PubSubConnection (same multicast as the publisher) ── */
     UA_PubSubConnectionConfig connConfig;
     memset(&connConfig, 0, sizeof(connConfig));
     connConfig.name = UA_STRING("UDP Multicast Subscriber Connection");
@@ -301,7 +301,7 @@ static void setupSubscriber(UA_Server *server, PubSubCtx *subContext) {
                          &UA_TYPES[UA_TYPES_NETWORKADDRESSURLDATATYPE]);
 
     //connConfig.publisherIdType = UA_PUBLISHERIDTYPE_UINT16;
-    //connConfig.publisherId.uint16 = 2234;  /* diverso dal publisher */
+    //connConfig.publisherId.uint16 = 2234;  /* different from the publisher's connection id */
 
     UA_NodeId connId;
     UA_StatusCode rc = UA_Server_addPubSubConnection(server, &connConfig, &connId);
@@ -350,15 +350,16 @@ static void setupSubscriber(UA_Server *server, PubSubCtx *subContext) {
     memset(&dsrConfig, 0, sizeof(dsrConfig));
     dsrConfig.name = UA_STRING("TemperatureReader");
 
-    /* Filtro: accetta solo messaggi dal PublisherId 1 (edge-up-3) */
+    /* Filter: only accept messages from PublisherId 2234 (edge-up-3) */
     UA_UInt16 pubId = 2234;
     //UA_Variant_setScalar(&dsrConfig.publisherId, &pubId, &UA_TYPES[UA_TYPES_UINT16]);
     dsrConfig.publisherId.idType = UA_PUBLISHERIDTYPE_UINT16;
     dsrConfig.publisherId.id.uint16 = pubId;
 
+    /* Must match the publisher's WriterGroup/DataSetWriter ids exactly. */
     dsrConfig.writerGroupId   = 100;
-    dsrConfig.dataSetWriterId = 62541;  // non 1
-    /* DataSetMetaData: descrive il contenuto atteso del DataSet */
+    dsrConfig.dataSetWriterId = 62541;
+    /* DataSetMetaData: describes the DataSet's expected content */
     UA_DataSetMetaDataType_init(&dsrConfig.dataSetMetaData);
     dsrConfig.dataSetMetaData.name = UA_STRING("TemperatureDataSet");
     dsrConfig.dataSetMetaData.fieldsSize = 1;
@@ -369,10 +370,10 @@ static void setupSubscriber(UA_Server *server, PubSubCtx *subContext) {
     UA_FieldMetaData_init(field);
     field->builtInType = UA_NS0ID_FLOAT;
     field->dataType = UA_TYPES[UA_TYPES_FLOAT].typeId;
-    field->valueRank = -1;  /* scalare */
+    field->valueRank = -1;  /* scalar */
     field->name = UA_STRING("Temperature");
 
-    /* Message settings UADP: deve matchare quelli del publisher */
+    /* UADP message settings: must match the publisher's exactly */
     UA_UadpDataSetReaderMessageDataType dsrMsgConfig;
     memset(&dsrMsgConfig, 0, sizeof(dsrMsgConfig));
     dsrMsgConfig.networkMessageContentMask =
@@ -396,11 +397,11 @@ static void setupSubscriber(UA_Server *server, PubSubCtx *subContext) {
     }
     printf("[SERVER]   + DataSetReader (filter: pubId=1, wgId=100, dswId=1)\n");
 
-    /* ─── 4. TargetVariables: mappa il campo ricevuto alla variabile locale ── */
+    /* ─── 4. TargetVariables: map the received field to the local variable ── */
     UA_FieldTargetDataType targetVar;
     memset(&targetVar, 0, sizeof(UA_FieldTargetDataType));
     targetVar.attributeId = UA_ATTRIBUTEID_VALUE;
-    targetVar.targetNodeId =   UA_NODEID_NUMERIC(NS_LOCAL, 50001);/* il tuo NodeId target */;
+    targetVar.targetNodeId =   UA_NODEID_NUMERIC(NS_LOCAL, 50001);/* InputData/Temperature node id */;
     //rc=UA_Server_DataSetReader_createTargetVariables(server, dsrId, 1, &targetVar);
     rc=UA_Server_setDataSetReaderTargetVariables(server, dsrId, 1, &targetVar);
     if(rc != UA_STATUSCODE_GOOD) {
@@ -412,12 +413,14 @@ static void setupSubscriber(UA_Server *server, PubSubCtx *subContext) {
 
     UA_Server_enableDataSetReader(server, dsrId);
     UA_Server_enablePubSubConnection(server, connId);
+    /* With SKS, the ReaderGroup is made operational later by
+     * sksPullRequestCallback, once the decryption key is actually active. */
     if (!subContext->opts->sks)
         UA_Server_setReaderGroupOperational(server, rgId);
 }
 
 
- /* callback eseguita quando il client chiama il metodo */
+ /* Callback executed when the client calls the method */
 static UA_StatusCode startSubscriberCallback(
         UA_Server *server, const UA_NodeId *sessionId,
         void *sessionContext, const UA_NodeId *methodId,
@@ -429,7 +432,6 @@ static UA_StatusCode startSubscriberCallback(
     PubSubCtx *subContext = (PubSubCtx *)(methodContext);
     printf("[SERVER] StartSubscriber called — configuring PubSub...\n");
 
-    /* chiama le funzioni già scritte nel server */
     setupSubscriber(server, subContext);
 
     printf("[SERVER] Subscriber started\n");
@@ -495,7 +497,7 @@ static void buildUAFXAddressSpace(UA_Server *server, PubSubCtx *subContext) {
         qn(NS_LOCAL, "StartSubscriber"), methAttr,
         startSubscriberCallback, 0, NULL, 0, NULL, subContext, NULL);
 
-    /* ─── 3. Assets/ — usa cartella istanziata dal tipo ─────── */
+    /* ─── 3. Assets/ — use the folder instantiated by the type ─────── */
     UA_NodeId assetsFolder = resolveChildByNameServer(server, acNode, "Assets");
 
     UA_NodeId assetNode = addTypedObject(server, assetsFolder,
@@ -511,7 +513,7 @@ static void buildUAFXAddressSpace(UA_Server *server, PubSubCtx *subContext) {
     addStringVariable(server, assetNode, NS_LOCAL, "DeviceClass",       "DensitySensor");
     addStringVariable(server, assetNode, NS_LOCAL, "SerialNumber",      "SN-12345-ABCD");
 
-    /* ─── 4. FunctionalEntities/ — usa cartella istanziata dal tipo ── */
+    /* ─── 4. FunctionalEntities/ — use the folder instantiated by the type ── */
     UA_NodeId feFolder = resolveChildByNameServer(server, acNode, "FunctionalEntities");
     UA_NodeId feNode = addTypedObject(server, feFolder,
                                       NS_LOCAL, "DensityReadingFE",
@@ -527,7 +529,7 @@ static void buildUAFXAddressSpace(UA_Server *server, PubSubCtx *subContext) {
                       "1.0.0.0");
     addUInt32Variable(server, feNode, NS_LOCAL, "OperationalHealth", 0);
 
-    /* OutputData/InputData/ConnectionEndpoints non istanziate dal tipo → crea manualmente */
+    /* OutputData/InputData/ConnectionEndpoints are not instantiated by the type → create manually */
     UA_NodeId outputFolder = addFolder(server, feNode, NS_LOCAL, "OutputData");
     addDensityVariable(server, outputFolder, NS_LOCAL, "Density");
     printf("[SERVER]     + OutputData/Density\n");
@@ -538,7 +540,7 @@ static void buildUAFXAddressSpace(UA_Server *server, PubSubCtx *subContext) {
 
     addFolder(server, feNode, NS_LOCAL, "ConnectionEndpoints");
 
-    /* ─── 5. ComponentCapabilities/ — usa cartella istanziata dal tipo ── */
+    /* ─── 5. ComponentCapabilities/ — use the folder instantiated by the type ── */
     UA_NodeId capFolder = addFolder(server, acNode, NS_LOCAL, "ComponentCapabilities");
     addUInt32Variable(server, capFolder, NS_LOCAL, "MaxConnections", 4);
     addUInt32Variable(server, capFolder, NS_LOCAL, "MinConnections", 0);
@@ -570,10 +572,13 @@ int main(int argc, char **argv) {
     clientCreds creds;
     loadClientCredentials(opts.ldsUrl, opts.certDir, "subscriber", "urn:example:uafx:density-sensor-1", &creds);
 
-    /* ─── Crea server ────────────────────────────────────────── */
+    /* ─── Create server ────────────────────────────────────────── */
     UA_Server *server = UA_Server_new();
     UA_ServerConfig *config = UA_Server_getConfig(server);
 
+    /* UA_DataTypeArray is a singly linked list (each node's first field points
+     * to the next); chain AC -> Data -> DI so the server can decode all three
+     * custom type sets. */
     static UA_DataTypeArray customDataTypesAC = {
         NULL,
         UA_TYPES_UAFX_AC_COUNT,
@@ -652,7 +657,7 @@ int main(int argc, char **argv) {
     printf("[SERVER] mDNS Discovery: DISABLED\n\n");
 #endif*/
 
-    /* ─── Carica i tipi UAFX dal nodeset generato ────────────── */
+    /* ─── Load UAFX types from the generated nodeset ────────── */
     printf("[SERVER] Loading UAFX nodesets...\n");
     UA_StatusCode retval     = namespace_di_generated(server);
     UA_StatusCode retval_data = namespace_uafx_data_generated(server);
@@ -669,13 +674,13 @@ int main(int argc, char **argv) {
     PubSubCtx subContext;
     subContext.opts = &opts;
     subContext.creds = &creds;
-    /* ─── Costruisci AddressSpace ────────────────────────────── */
+    /* ─── Build AddressSpace ────────────────────────────── */
     buildUAFXAddressSpace(server, &subContext);
 
     if (opts.autostart)
         setupSubscriber(server, &subContext);
 
-    /* ─── Avvia server ───────────────────────────────────────── */
+    /* ─── Start server ───────────────────────────────────────── */
     retval = UA_Server_run_startup(server);
     if(retval != UA_STATUSCODE_GOOD) {
         printf("[ERROR] Server startup failed: %s\n",
@@ -683,11 +688,11 @@ int main(int argc, char **argv) {
         UA_Server_delete(server);
         return EXIT_FAILURE;
     }
-	/* Costruzione sub statico*/
+	/* Static subscriber setup (unused, kept for reference) */
 	//setupSubscriber(server);
 
 
-    /* ─── Registrazione all'LDS ──────────────────────────────── */
+    /* ─── LDS registration ──────────────────────────────── */
     /*UA_StatusCode rc = registerToLdsSecurely(server, &creds);
     if(rc != UA_STATUSCODE_GOOD) {
         printf("[WARNING] Shared LDS registration init failed: %s\n", UA_StatusCode_name(rc));
@@ -720,7 +725,7 @@ int main(int argc, char **argv) {
     printf("========================================================\n");
     printf("Press Ctrl+C to stop\n\n");
 
-    /* ─── Loop principale ────────────────────────────────────── */
+    /* ─── Main loop ────────────────────────────────────── */
     while(running) {
         UA_Server_run_iterate(server, true);
     }

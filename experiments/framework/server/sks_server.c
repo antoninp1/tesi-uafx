@@ -8,9 +8,14 @@
  * GetSecurityKeys Method, subject to authentication.
  *
  * Usage:
- *   ./sks_server <server-cert.der> <server-key.der> <lds-server-cert.der> \
- *       --trustlist <publisher-cert.der> <subscriber-cert.der> \
- *       [--port 4850]
+ *   ./sks_server <cert-dir>
+ *
+ * <cert-dir> must contain sks_server.cert.der, sks_server.key.der,
+ * ca.cert.der and crl.der (see loadClientCredentials() in sks_helpers.c).
+ * Trust is CA-based: any client certificate signed by ca.cert.der and
+ * not revoked in crl.der is accepted — there is no separate trustlist
+ * of individual Publisher/Subscriber certificates. The listening port
+ * is fixed at 4850 (not configurable via argv).
  *
  * Build: see CMakeLists.txt (target "sks_server")
  * ============================================================ */
@@ -97,13 +102,14 @@ addSecurityGroup(UA_Server *server, UA_NodeId *outNodeId) {
 static void
 usage(const char *progname) {
     fprintf(stderr,
-        "Usage: %s <server-cert.der> <server-key.der> <lds-cert.der>\n"
-        "       [--port <port>]                  (default: 4850)\n"
-        "       [--trustlist <cert1.der> <cert2.der> ...]\n"
+        "Usage: %s <cert-dir>\n"
         "\n"
-        "--trustlist must contain the Publisher's and Subscriber's\n"
-        "application certificates, so that their SecureChannel to\n"
-        "this SKS server gets accepted (SignAndEncrypt is required).\n",
+        "<cert-dir> must contain sks_server.cert.der, sks_server.key.der,\n"
+        "ca.cert.der and crl.der.\n"
+        "\n"
+        "Trust is CA-based: any client certificate signed by ca.cert.der\n"
+        "and not revoked in crl.der is accepted for the SecureChannel to\n"
+        "this SKS server (SignAndEncrypt is required).\n",
         progname);
 }
 

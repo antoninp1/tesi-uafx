@@ -113,6 +113,9 @@ resolveSksUrlFromLds(clientCreds *creds) {
     UA_Client *client = UA_Client_new();
     UA_ClientConfig *cc = UA_Client_getConfig(client);
     cc->securityMode = UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
+    /* Unlike encryptedSksClient()/registerToLdsSecurely(), no CA trust list
+     * is passed here, so the LDS server's own certificate is not validated
+     * against ca.cert.der on this connection. */
     UA_ClientConfig_setDefaultEncryption(cc, creds->clientCert, creds->clientKey, NULL, 0, &creds->crl, 1);
 
     size_t n = 0;
@@ -173,6 +176,9 @@ buildCertPath(const char *certDir, const char *filename) {
     return path;
 }
 
+/* Builds a per-endpoint UserTokenPolicy id as "username-policy" + the
+ * "#<PolicyName>" suffix of the endpoint's security policy URI, so each
+ * endpoint gets a distinct, stable policyId for its certificate token. */
 UA_String
 makeUsernamePolicyId(const UA_String *securityPolicyUri) {
         UA_Byte *hash = NULL;
@@ -193,6 +199,8 @@ makeUsernamePolicyId(const UA_String *securityPolicyUri) {
     return policyId;   
 }
 
+/* Appends a CERTIFICATE UserTokenPolicy to every endpoint, so X.509-based
+ * activateSession() below is offered as a login option alongside anonymous. */
 void
 addCertificateTokenPolicy(UA_ServerConfig *config) {
     for (size_t i=0; i < config->endpointsSize; i++) {
@@ -326,7 +334,7 @@ startPeriodicLdsRegistration(UA_Server *server,
                              UA_Double intervalMs,
                              UA_UInt64 *callbackId,
                              void **ctxOut) {
-    periodicLdsRegisterCallback(server, creds); /* enregistrement immédiat */
+    periodicLdsRegisterCallback(server, creds); /* register immediately, then on the repeated interval below */
 
     UA_StatusCode rc = UA_Server_addRepeatedCallback(server, periodicLdsRegisterCallback,
                                                      creds, intervalMs, callbackId);
