@@ -1,3 +1,3 @@
-void lockMemoryRT(void);
-void setupSchedulePriority(int schedPrio);
-void setupCpuAffinity(int rtCore);
+int lockMemoryRT(void);
+int setupSchedulePriority(int schedPrio);
+int setupCpuAffinity(int rtCore);

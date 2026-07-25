@@ -1,5 +1,6 @@
 import asyncio
-from asyncua import Client
+from asyncua import Client, ua
+from asyncua.crypto.security_policies import SecurityPolicyBasic256Sha256
 import sys
 
 SUB_ADDR = "192.168.17.184"
@@ -12,10 +13,10 @@ args = sys.argv
 
 
 if "-p" in args:
-    SERVER_URL = "opc.tcp://%s:4841"%PUB_ADDR
+    SERVER_URL = "opc.tcp://%s:4941"%PUB_ADDR
     NODE_PATH = NODE_PATH_PUB
 elif "-s" in args:
-    SERVER_URL = "opc.tcp://%s:4841"%SUB_ADDR
+    SERVER_URL = "opc.tcp://%s:4941"%SUB_ADDR
     NODE_PATH = NODE_PATH_SUB
 else:
     quit()
@@ -24,9 +25,17 @@ else:
 
 async def main():
     client = Client(url=SERVER_URL)
-    async with Client(url=SERVER_URL) as client:
-        client.set_user("uafx-operator")
-        client.set_password("ChangeThisOperatorPasswordInLab")
+    client.application_uri = "urn:example:uafx:asyncua"
+    await client.set_security(
+        SecurityPolicyBasic256Sha256,
+        certificate="../certs/asyncua.cert.der",
+        private_key="../certs/asyncua.key.der",
+        mode=ua.MessageSecurityMode.SignAndEncrypt
+    )
+    await client.load_private_key("../certs/asyncua.key.der")
+    await client.load_client_certificate("../certs/asyncua.cert.der")
+
+    async with client:
         objects = client.get_objects_node()
         fxroot = await objects.get_child(["4:FxRoot"])
         sensor = await fxroot.get_child([NODE_PATH[2]])

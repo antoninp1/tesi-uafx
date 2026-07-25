@@ -10,6 +10,17 @@ typedef struct {
     UA_String applicationUri;
 } clientCreds;
 
+typedef enum {
+    UAFX_ROLE_READER   = 1,
+    UAFX_ROLE_OPERATOR = 2,
+} UafxRole;
+
+typedef struct {
+    UA_ByteString *operatorCerts;
+    size_t operatorCertsSize;
+} UafxRoleConfig;
+
+void setRoleConfig(UafxRoleConfig *roleConfig);
 
 UA_StatusCode loadClientCredentials(const char *ldsUrl, const char *certDir, const char *deviceName, const char *applicationUri, clientCreds *out);
 
@@ -55,3 +66,14 @@ startPeriodicLdsRegistration(UA_Server *server,
 
 void
 stopPeriodicLdsRegistration(UA_Server *server, UA_UInt64 callbackId, void *ctx);
+
+UA_StatusCode
+loadRoleConfig(const char *certDir, const char **operatorDeviceNames,
+              size_t operatorDeviceNamesSize, UafxRoleConfig *out);
+
+void clearRoleConfig(UafxRoleConfig *roleConfig);
+
+UA_Byte
+getUserAccessLevel_app(UA_Server *server, UA_AccessControl *ac,
+                       const UA_NodeId *sessionId, void *sessionContext,
+                       const UA_NodeId *nodeId, void *nodeContext);

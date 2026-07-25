@@ -6,24 +6,30 @@
 #include <sched.h>
 #include <sys/mman.h>
 
-void lockMemoryRT(void) {
+int lockMemoryRT(void) {
     if (mlockall(MCL_CURRENT | MCL_FUTURE) != 0) {
         perror("[RT] mlockall failed (ran as root ?)");
+        return -1;
     }
+    return 0;
 }
 
-void setupSchedulePriority(int schedPrio) {
+int setupSchedulePriority(int schedPrio) {
     struct sched_param sp = { .sched_priority = schedPrio };
     if (sched_setscheduler(0, SCHED_FIFO, &sp) != 0) {
         perror("[RT] sched_setscheduler failed (ran as root ?)");
+        return -1;
     }
+    return 0;
 }
 
-void setupCpuAffinity(int rtCore) {
+int setupCpuAffinity(int rtCore) {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     CPU_SET(rtCore, &cpuset);
     if (sched_setaffinity(0, sizeof(cpuset), &cpuset) != 0) {
         perror("[RT] sched_setaffinity failed");
+        return -1;
     }
+    return 0;
 }

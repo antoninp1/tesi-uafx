@@ -52,9 +52,7 @@
 #define FXAC_ID_FUNCTIONALENTITYTYPE     4
 
 #define NS_LOCAL 1
-#define LDS_URL          "opc.tcp://192.168.17.112:4840"
 #define SERVER_PUBLIC_URL "opc.tcp://edge-up-4:4941"
-#define APPLICATION_URI "urn:example:uafx:density-sensor-1"
 
 static volatile UA_Boolean running = true;
 static UA_NodeId readerGroupIdent;
@@ -64,7 +62,7 @@ static char *sksServerUrl = NULL;
 typedef struct {
     CliOptions *opts;
     clientCreds *creds;
-} SubscriberContext;
+} PubSubCtx;
 
 static void stopHandler(int sig) {
     printf("\n[SERVER] Shutdown signal received\n");
@@ -284,7 +282,7 @@ static void buildNetworkInterfaces(UA_Server *server) {
     printf("[SERVER]   ChassisId (shared): 00:07:32:ae:79:1d\n\n");
 }
 
-static void setupSubscriber(UA_Server *server, SubscriberContext *subContext) {
+static void setupSubscriber(UA_Server *server, PubSubCtx *subContext) {
     printf("[SERVER] Setting up PubSub Subscriber...\n");
 
     /* ─── 1. PubSubConnection (stessa multicast del publisher) ── */
@@ -428,7 +426,7 @@ static UA_StatusCode startSubscriberCallback(
         const UA_Variant *input, size_t outputSize,
         UA_Variant *output) {
 
-    SubscriberContext *subContext = (SubscriberContext *)(methodContext);
+    PubSubCtx *subContext = (PubSubCtx *)(methodContext);
     printf("[SERVER] StartSubscriber called — configuring PubSub...\n");
 
     /* chiama le funzioni già scritte nel server */
@@ -460,7 +458,7 @@ static UA_StatusCode startSubscriberCallback(
  *                   +-- RemoteSystem_1/ (RELY-10TSN12)
  * ═══════════════════════════════════════════════════════════ */
 
-static void buildUAFXAddressSpace(UA_Server *server, SubscriberContext subContext) {
+static void buildUAFXAddressSpace(UA_Server *server, PubSubCtx *subContext) {
     printf("[SERVER] Building UAFX AddressSpace...\n");
 
     UA_UInt16 nsFxAc = resolveNamespaceIndex(server, FXAC_NS_URI);
@@ -495,7 +493,7 @@ static void buildUAFXAddressSpace(UA_Server *server, SubscriberContext subContex
     UA_Server_addMethodNode(server, UA_NODEID_NULL, acNode,
         UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
         qn(NS_LOCAL, "StartSubscriber"), methAttr,
-        startSubscriberCallback, 0, NULL, 0, NULL, &subContext, NULL);
+        startSubscriberCallback, 0, NULL, 0, NULL, subContext, NULL);
 
     /* ─── 3. Assets/ — usa cartella istanziata dal tipo ─────── */
     UA_NodeId assetsFolder = resolveChildByNameServer(server, acNode, "Assets");
@@ -535,7 +533,7 @@ static void buildUAFXAddressSpace(UA_Server *server, SubscriberContext subContex
     printf("[SERVER]     + OutputData/Density\n");
 
     UA_NodeId inputFolder = addFolder(server, feNode, NS_LOCAL, "InputData");
-    addInputVariable(server, inputFolder, NS_LOCAL, "Temperature", subContext.opts->rtLog);
+    addInputVariable(server, inputFolder, NS_LOCAL, "Temperature", subContext->opts->rtLog);
     printf("[SERVER]     + InputData/Temperature\n");
 
     addFolder(server, feNode, NS_LOCAL, "ConnectionEndpoints");
@@ -570,7 +568,7 @@ int main(int argc, char **argv) {
         lockMemoryRT();
 
     clientCreds creds;
-    loadClientCredentials(LDS_URL, opts.certDir, "subscriber", "urn:example:uafx:density-sensor-1", &creds);
+    loadClientCredentials(opts.ldsUrl, opts.certDir, "subscriber", "urn:example:uafx:density-sensor-1", &creds);
 
     /* ─── Crea server ────────────────────────────────────────── */
     UA_Server *server = UA_Server_new();
@@ -596,57 +594,44 @@ int main(int argc, char **argv) {
 
     config->customDataTypes = &customDataTypesDI;
 
-    UA_ByteString caCert = loadFile(buildCertPath(opts.certDir, "ca.cert.der"));
-    UA_ByteString crl = loadFile(buildCertPath(opts.certDir, "crl.der"));
     char *serverCertPath = buildCertPath(opts.certDir, "density_server.cert.der");
     char *serverKeyPath  = buildCertPath(opts.certDir, "density_server.key.der");
     UA_ByteString serverCert = loadFile(serverCertPath);
     UA_ByteString serverKey  = loadFile(serverKeyPath);
     
-    UA_ServerConfig_setDefaultWithSecurityPolicies(config, 4941, &serverCert, &serverKey, &caCert, 1, &crl, 1, NULL, 0);
+    UA_ServerConfig_setDefaultWithSecurityPolicies(config, 4941, &serverCert, &serverKey, &creds.caCert, 1, &creds.crl, 1, NULL, 0);
 
     /* AccessControl: X.509 certificate authentication + restrict
      * Method calls to authenticated sessions only. Uses the same
      * activateSession_sks() already validated on the SKS server --
      * channel cert must equal user token cert, both verified against
      * the trustlist above. No anonymous access, no passwords. */
+    static const char *operatorDeviceNames[] = { "asyncua" };
+    UafxRoleConfig roleConfig;
+    loadRoleConfig(opts.certDir, operatorDeviceNames, 1, &roleConfig);
+
     config->accessControl.activateSession = activateSession;
     config->accessControl.getUserExecutableOnObject = getUserExecutableOnObject_app;
+    config->accessControl.getUserAccessLevel = getUserAccessLevel_app;
+    setRoleConfig(&roleConfig);
 
     UA_String hostname = UA_String_fromChars(SERVER_PUBLIC_URL);
     config->applicationDescription.applicationType = UA_APPLICATIONTYPE_SERVER;
 
-    config->pubSubConfig.securityPolicies = (UA_PubSubSecurityPolicy *)UA_malloc(sizeof(UA_PubSubSecurityPolicy));
-    config->pubSubConfig.securityPoliciesSize = 1;
-    UA_PubSubSecurityPolicy_Aes256Ctr(config->pubSubConfig.securityPolicies, config->logging);
-
-
-
     if (opts.sks) {
-        UA_ByteString subCert = loadFile(buildCertPath(opts.certDir, "subscriber.cert.der"));
-        UA_ByteString subKey  = loadFile(buildCertPath(opts.certDir, "subscriber.key.der"));
-        if(subCert.length == 0 || subKey.length == 0) {
-            printf("[ERROR] Cannot load %s / %s — generate them first "
-                   "(see tools/certs/create_self-signed.py)\n",
-                   buildCertPath(opts.certDir, "subscriber.cert.der"), buildCertPath(opts.certDir, "subscriber.key.der"));
-            UA_Server_delete(server);
-            return EXIT_FAILURE;
-        }
+        config->pubSubConfig.securityPolicies = (UA_PubSubSecurityPolicy *)UA_malloc(sizeof(UA_PubSubSecurityPolicy));
+        config->pubSubConfig.securityPoliciesSize = 1;
+        UA_PubSubSecurityPolicy_Aes256Ctr(config->pubSubConfig.securityPolicies, config->logging);
         sksClientConfigGlobal = encryptedSksClient(&creds);
-        UA_ByteString_clear(&subCert);
-        UA_ByteString_clear(&subKey);
     }
 
     UA_String_clear(&config->applicationDescription.applicationUri);
-    config->applicationDescription.applicationUri =
-        UA_String_fromChars(APPLICATION_URI);
+    UA_String_copy(&creds.applicationUri, &config->applicationDescription.applicationUri);
 
     UA_LocalizedText_clear(&config->applicationDescription.applicationName);
-    config->applicationDescription.applicationName =
-        UA_LOCALIZEDTEXT_ALLOC("en-US", "UAFX Density Sensor");
+    config->applicationDescription.applicationName = UA_LOCALIZEDTEXT_ALLOC("en-US", "UAFX Density Sensor");
     config->applicationDescription.discoveryUrlsSize = 1;
-    config->applicationDescription.discoveryUrls =
-        (UA_String*)UA_Array_new(1, &UA_TYPES[UA_TYPES_STRING]);
+    config->applicationDescription.discoveryUrls = (UA_String*)UA_Array_new(1, &UA_TYPES[UA_TYPES_STRING]);
     config->applicationDescription.discoveryUrls[0] = hostname;
 
     
@@ -681,11 +666,11 @@ int main(int argc, char **argv) {
         printf("[SERVER] + UAFX types loaded perfectly\n\n");
     }
 
-    SubscriberContext subContext;
+    PubSubCtx subContext;
     subContext.opts = &opts;
     subContext.creds = &creds;
     /* ─── Costruisci AddressSpace ────────────────────────────── */
-    buildUAFXAddressSpace(server, subContext);
+    buildUAFXAddressSpace(server, &subContext);
 
     if (opts.autostart)
         setupSubscriber(server, &subContext);
@@ -703,10 +688,14 @@ int main(int argc, char **argv) {
 
 
     /* ─── Registrazione all'LDS ──────────────────────────────── */
-    UA_StatusCode rc = registerToLdsSecurely(server, &creds);
+    /*UA_StatusCode rc = registerToLdsSecurely(server, &creds);
     if(rc != UA_STATUSCODE_GOOD) {
         printf("[WARNING] Shared LDS registration init failed: %s\n", UA_StatusCode_name(rc));
-    }
+    }*/
+    UA_UInt64 ldsRegisterCallbackId = 0;
+    void *ldsRegisterCtx = NULL;
+    startPeriodicLdsRegistration(server, &creds, 5*60*1000.0, &ldsRegisterCallbackId, &ldsRegisterCtx);
+
 
 
     printf("\n========================================================\n");
@@ -732,20 +721,18 @@ int main(int argc, char **argv) {
     printf("Press Ctrl+C to stop\n\n");
 
     /* ─── Loop principale ────────────────────────────────────── */
-    if (opts.schedPrio != NO_SCHED_PRIO)
-        setupSchedulePriority(opts.schedPrio);
-    
-    if (opts.rtCore != NO_RT_CORE)
-        setupCpuAffinity(opts.rtCore);
-
     while(running) {
         UA_Server_run_iterate(server, true);
     }
 
     printf("\n[SERVER] Shutting down...\n");
+    if(ldsRegisterCallbackId != 0)
+        stopPeriodicLdsRegistration(server, ldsRegisterCallbackId, ldsRegisterCtx);
+
     UA_Server_run_shutdown(server);
     UA_Server_delete(server);
     clearClientCredentials(&creds);
+    clearRoleConfig(&roleConfig);
     printf("[SERVER] Stopped cleanly\n\n");
 
     return EXIT_SUCCESS;

@@ -3,6 +3,14 @@
 #include <stdio.h>
 #include "sks_helpers.h"
 
+static UafxRoleConfig *g_roleConfig = NULL;
+
+void
+setRoleConfig(UafxRoleConfig *roleConfig) {
+    g_roleConfig = roleConfig;
+}
+
+
 UA_ByteString
 loadFile(const char *const path) {
     UA_ByteString fileContents = UA_STRING_NULL;
@@ -35,7 +43,7 @@ encryptedSksClient(clientCreds *creds) {
     UA_ClientConfig_setDefaultEncryption(cc, creds->clientCert, creds->clientKey, &creds->caCert, 1, &creds->crl, 1);
     cc->securityPolicyUri = UA_STRING_ALLOC("http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256");
     UA_String_clear(&cc->clientDescription.applicationUri);
-    cc->clientDescription.applicationUri = creds->applicationUri;
+    UA_String_copy(&creds->applicationUri, &cc->clientDescription.applicationUri);
 
     UA_X509IdentityToken *x509Token = UA_X509IdentityToken_new();
     UA_ByteString_copy(&creds->clientCert, &x509Token->certificateData);
@@ -58,7 +66,7 @@ registerToLdsSecurely(UA_Server *server, clientCreds *creds) {
     UA_ClientConfig_setDefaultEncryption(&cc, creds->clientCert, creds->clientKey, &creds->caCert, 1, &creds->crl, 1);
 
     UA_String_clear(&cc.clientDescription.applicationUri);
-    cc.clientDescription.applicationUri = creds->applicationUri;
+    UA_String_copy(&creds->applicationUri, &cc.clientDescription.applicationUri);
 
     UA_X509IdentityToken *x509Token = UA_X509IdentityToken_new();
     UA_ByteString_copy(&creds->clientCert, &x509Token->certificateData);
@@ -230,7 +238,22 @@ activateSession(UA_Server *server, UA_AccessControl *ac,
      * NULL so as not to interfere with the lifecycle
      * (closeSession/clear) of the default AccessControl plugin, which
      * manages its own internal structure. */
-    *sessionContext = (void *)1; /* non-NULL to indicate success */
+    /*
+    *sessionContext = (void *)1;
+    return UA_STATUSCODE_GOOD;*/
+    UafxRole role = UAFX_ROLE_READER;
+    //UafxRoleConfig *roleConfig = (UafxRoleConfig *)ac->context;
+    UafxRoleConfig *roleConfig = g_roleConfig;
+    if(roleConfig) {
+        for(size_t i = 0; i < roleConfig->operatorCertsSize; i++) {
+            if(UA_ByteString_equal(&roleConfig->operatorCerts[i], secureChannelRemoteCertificate)) {
+                role = UAFX_ROLE_OPERATOR;
+                break;
+            }
+        }
+    }
+
+    *sessionContext = (void *)(uintptr_t)role;
     return UA_STATUSCODE_GOOD;
 }
 
@@ -243,9 +266,51 @@ getUserExecutableOnObject_app(UA_Server *server, UA_AccessControl *ac,
      * activateSession_sks (sessionContext != NULL means the
      * X.509 certificate was verified). Anonymous sessions
      * (sessionContext == NULL) are denied. */
-    return sessionContext != NULL;
+    //return sessionContext != NULL;
+    UafxRole role = (UafxRole)(uintptr_t)sessionContext;
+    return role == UAFX_ROLE_OPERATOR;
 }
 
+UA_Byte
+getUserAccessLevel_app(UA_Server *server, UA_AccessControl *ac,
+                       const UA_NodeId *sessionId, void *sessionContext,
+                       const UA_NodeId *nodeId, void *nodeContext) {
+    UafxRole role = (UafxRole)(uintptr_t)sessionContext;
+    if(role == UAFX_ROLE_OPERATOR)
+        return UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
+    return UA_ACCESSLEVELMASK_READ;
+}
+
+UA_StatusCode
+loadRoleConfig(const char *certDir, const char **operatorDeviceNames,
+              size_t operatorDeviceNamesSize, UafxRoleConfig *out) {
+    out->operatorCerts = (UA_ByteString *)UA_calloc(operatorDeviceNamesSize, sizeof(UA_ByteString));
+    if(!out->operatorCerts)
+        return UA_STATUSCODE_BADOUTOFMEMORY;
+    out->operatorCertsSize = operatorDeviceNamesSize;
+
+    for(size_t i = 0; i < operatorDeviceNamesSize; i++) {
+        char certFile[128];
+        snprintf(certFile, sizeof(certFile), "%s.cert.der", operatorDeviceNames[i]);
+        out->operatorCerts[i] = loadFile(buildCertPath(certDir, certFile));
+        if(out->operatorCerts[i].length == 0) {
+            printf("[ROLE-CONFIG] WARNING: could not load operator cert '%s' — "
+                  "this identity will NOT get operator rights\n", certFile);
+        }
+    }
+    return UA_STATUSCODE_GOOD;
+}
+
+void
+clearRoleConfig(UafxRoleConfig *roleConfig) {
+    if(!roleConfig || !roleConfig->operatorCerts)
+        return;
+    for(size_t i = 0; i < roleConfig->operatorCertsSize; i++)
+        UA_ByteString_clear(&roleConfig->operatorCerts[i]);
+    UA_free(roleConfig->operatorCerts);
+    roleConfig->operatorCerts = NULL;
+    roleConfig->operatorCertsSize = 0;
+}
 
 static void
 periodicLdsRegisterCallback(UA_Server *server, void *data) {

@@ -43,7 +43,7 @@
 #define DEMO_MAXFUTUREKEYCOUNT 2
 #define DEMO_MAXPASTKEYCOUNT 2
 
-#define LDS_URL "opc.tcp://192.168.17.112:4840"
+#define LDS_URL "opc.tcp://192.168.17.143:4840"
 #define LDS_REREGISTER_INTERVAL_MS 30000.0
 
 static volatile UA_Boolean running = true;

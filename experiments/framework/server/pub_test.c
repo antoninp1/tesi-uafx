@@ -53,9 +53,13 @@
 #define FXAC_ID_FUNCTIONALENTITYTYPE     4
 
 #define NS_LOCAL 1
-#define LDS_URL          "opc.tcp://192.168.17.112:4840"
 #define SERVER_PUBLIC_URL "opc.tcp://edge-up-3:4941"
 #define APPLICATION_URI "urn:example:uafx:temperature-sensor-1"
+
+#define ETH_TRANSPORT_PROFILE "http://opcfoundation.org/UA-Profile/Transport/pubsub-eth-uadp"
+
+#define CLOCKID CLOCK_TAI
+#define DEFAULT_SOCKET_PRIORITY 6
 
 static UA_NodeId connectionIdent, publishedDataSetIdent, writerGroupIdent,
     dataSetWriterIdent;
@@ -65,12 +69,90 @@ static volatile UA_Boolean running = true;
 static UA_NodeId temperatureNodeId = {0};
 static UA_ClientConfig *sksClientConfigGlobal = NULL;
 static char *sksServerUrl = NULL;
-//static CliOptions opts;
+
+static UA_UInt32 socketPriority    = DEFAULT_SOCKET_PRIORITY;
+static UA_Boolean disableSoTxtime = true;
+static UA_Int32 clockSource = CLOCK_TAI;
+
+static UA_Float     temperatureValue      = 20.0f;
+static UA_DataValue *temperatureDataValueRT = NULL;
+
+static timer_t writerGroupTimer;
+
+static UA_Server *server = NULL;
+
+static volatile int sksKeyActive = 0; 
+
+typedef struct {
+    CliOptions *opts;
+    clientCreds *creds;
+} PubSubCtx;
 
 static void stopHandler(int sig) {
     printf("\n[SERVER] Shutdown signal received\n");
     running = false;
 }
+
+static struct timespec lastTrigger = {0};
+
+static void
+writerGroupPublishTrigger(union sigval signal) {
+    if (!__atomic_load_n(&sksKeyActive, __ATOMIC_SEQ_CST))
+        return;
+    struct timespec now;
+    clock_gettime(CLOCKID, &now);
+    if (lastTrigger.tv_sec != 0) {
+        long deltaNs = (now.tv_sec - lastTrigger.tv_sec) * 1000000000L
+                     + (now.tv_nsec - lastTrigger.tv_nsec);
+        printf("[JITTER] delta=%ld ns\n", deltaNs);
+    }
+    lastTrigger = now;
+    UA_Server_triggerWriterGroupPublish(server, writerGroupIdent);
+}
+
+static UA_StatusCode
+writerGroupStateMachine(UA_Server *server, const UA_NodeId componentId,
+                        void *componentContext, UA_PubSubState *state,
+                        UA_PubSubState targetState) {
+    UA_WriterGroupConfig config;
+    struct itimerspec interval;
+    memset(&interval, 0, sizeof(interval));
+
+    if (targetState == *state)
+        return UA_STATUSCODE_GOOD;
+
+    switch (targetState) {
+        case UA_PUBSUBSTATE_ERROR:
+        case UA_PUBSUBSTATE_DISABLED:
+        case UA_PUBSUBSTATE_PAUSED:
+            timer_settime(writerGroupTimer, 0, &interval, NULL); /* interval=0 -> arrêt */
+            *state = targetState;
+            break;
+
+        case UA_PUBSUBSTATE_PREOPERATIONAL:
+        case UA_PUBSUBSTATE_OPERATIONAL:
+            if (*state == UA_PUBSUBSTATE_OPERATIONAL)
+                break;
+            UA_Server_getWriterGroupConfig(server, writerGroupIdent, &config);
+            interval.it_interval.tv_sec = (time_t)(config.publishingInterval / 1000);
+            interval.it_interval.tv_nsec =
+                ((long long)(config.publishingInterval * 1000 * 1000)) % (1000 * 1000 * 1000);
+            interval.it_value = interval.it_interval;
+            UA_WriterGroupConfig_clear(&config);
+            if (timer_settime(writerGroupTimer, 0, &interval, NULL) != 0)
+                return UA_STATUSCODE_BADINTERNALERROR;
+            *state = UA_PUBSUBSTATE_OPERATIONAL;
+            break;
+
+        default:
+            return UA_STATUSCODE_BADINTERNALERROR;
+    }
+    return UA_STATUSCODE_GOOD;
+}
+
+
+
+
 
 static void
 sksPullRequestCallback(UA_Server *server, UA_StatusCode sksPullRequestStatus,
@@ -80,6 +162,7 @@ sksPullRequestCallback(UA_Server *server, UA_StatusCode sksPullRequestStatus,
     UA_Server_getWriterGroupState(server, writerGroupIdent, &state);
     if(sksPullRequestStatus == UA_STATUSCODE_GOOD) {
         UA_Server_setWriterGroupActivateKey(server, writerGroupIdent);
+        __atomic_store_n(&sksKeyActive, 1, __ATOMIC_SEQ_CST);
         printf("[SERVER] SKS: encryption key activated for WriterGroup\n");
     } else if(sksPullRequestStatus != UA_STATUSCODE_GOOD) {
         printf("[SERVER] SKS: pull request FAILED: %s\n",
@@ -92,14 +175,8 @@ sksPullRequestCallback(UA_Server *server, UA_StatusCode sksPullRequestStatus,
  * Temperature Variable with Dynamic Callback
  * ═══════════════════════════════════════════════════════════ */
 
-static void readTemperature(UA_Server *server, const UA_NodeId *sessionId,
-                            void *sessionContext, const UA_NodeId *nodeId,
-                            void *nodeContext, const UA_NumericRange *range,
-                            const UA_DataValue *data) {
-    UA_Float temperature = 20.0f + ((rand() % 1000) - 500) / 100.0f;
-    UA_Variant value;
-    UA_Variant_setScalar(&value, &temperature, &UA_TYPES[UA_TYPES_FLOAT]);
-    UA_Server_writeValue(server, *nodeId, value);
+static void updateTemperatureRT(void) {
+    temperatureValue = 20.0f + ((rand() % 1000) - 500) / 100.0f;
 }
 
 static UA_NodeId addTemperatureVariable(UA_Server *server, UA_NodeId parent,
@@ -108,8 +185,7 @@ static UA_NodeId addTemperatureVariable(UA_Server *server, UA_NodeId parent,
     attr.displayName = lt(name);
     attr.description = lt("Current temperature reading in degrees Celsius");
 
-    UA_Float initialValue = 20.0f;
-    UA_Variant_setScalar(&attr.value, &initialValue, &UA_TYPES[UA_TYPES_FLOAT]);
+    UA_Variant_setScalar(&attr.value, &temperatureValue, &UA_TYPES[UA_TYPES_FLOAT]);
     attr.dataType = UA_TYPES[UA_TYPES_FLOAT].typeId;
     attr.accessLevel = UA_ACCESSLEVELMASK_READ;
 
@@ -118,10 +194,15 @@ static UA_NodeId addTemperatureVariable(UA_Server *server, UA_NodeId parent,
         UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT), qn(ns, name),
         UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE), attr, NULL, &newNode);
 
-    UA_ValueCallback callback;
-    callback.onRead  = readTemperature;
-    callback.onWrite = NULL;
-    UA_Server_setVariableNode_valueCallback(server, newNode, callback);
+    temperatureDataValueRT = UA_DataValue_new();
+    UA_Variant_setScalar(&temperatureDataValueRT->value, &temperatureValue,
+                          &UA_TYPES[UA_TYPES_FLOAT]);
+    temperatureDataValueRT->hasValue = true;
+
+    UA_StatusCode retval = UA_Server_setVariableNode_externalValueSource(server, newNode, &temperatureDataValueRT, NULL);
+    if (retval != UA_STATUSCODE_GOOD) {
+        printf("[ERROR] externalValueSource failed: %s\n", UA_StatusCode_name(retval));
+    }
 
     addStringVariable(server, newNode, ns, "EngineeringUnits", "\xC2\xB0""C");
 
@@ -254,7 +335,7 @@ static void buildNetworkInterfaces(UA_Server *server) {
                     UA_NetworkAddressUrlDataType *networkAddressUrl){
       UA_PubSubConnectionConfig connectionConfig;
       memset(&connectionConfig, 0, sizeof(connectionConfig));
-      connectionConfig.name = UA_STRING("UDP Connection 1");
+      connectionConfig.name = UA_STRING("ETH Connection 1");
       connectionConfig.transportProfileUri = *transportProfile;
       UA_Variant_setScalar(&connectionConfig.address, networkAddressUrl,
                          &UA_TYPES[UA_TYPES_NETWORKADDRESSURLDATATYPE]);
@@ -262,8 +343,17 @@ static void buildNetworkInterfaces(UA_Server *server) {
      * the publisher on Subscriber side */
     	connectionConfig.publisherId.idType = UA_PUBLISHERIDTYPE_UINT16;
     	connectionConfig.publisherId.id.uint16 = 2234;
-	connectionConfig.enabled = false;
+
+            /* Connection options are given as Key/Value Pairs - Sockprio and Txtime */
+        UA_KeyValueMap_setScalar(&connectionConfig.connectionProperties,
+                UA_QUALIFIEDNAME(0, "priority"), &socketPriority, &UA_TYPES[UA_TYPES_UINT32]);
+        UA_KeyValueMap_setScalar(&connectionConfig.connectionProperties,
+                UA_QUALIFIEDNAME(0, "txtime-enable"), &disableSoTxtime, &UA_TYPES[UA_TYPES_BOOLEAN]);
+
+	    connectionConfig.enabled = false;
     	UA_Server_addPubSubConnection(server, &connectionConfig, &connectionIdent);
+
+        UA_KeyValueMap_clear(&connectionConfig.connectionProperties);
 }
 
      //addPublishedDataset
@@ -294,17 +384,18 @@ static void addDataSetField(UA_Server *server) {
 }
 
 static void addWriterGroup(UA_Server *server, void *context) {
-    CliOptions *optContext = (CliOptions *)context;
+    PubSubCtx *pubContext = (PubSubCtx *)context;
     UA_WriterGroupConfig writerGroupConfig;
     memset(&writerGroupConfig, 0, sizeof(UA_WriterGroupConfig));
     writerGroupConfig.name = UA_STRING("Demo WriterGroup");
-    writerGroupConfig.publishingInterval = (UA_Double)optContext->cycleTime/1000000.0;
+    writerGroupConfig.publishingInterval = (UA_Duration)pubContext->opts->cycleTime/1000000;
     writerGroupConfig.writerGroupId = 100;
     writerGroupConfig.enabled = false;
     writerGroupConfig.encodingMimeType = UA_PUBSUB_ENCODING_UADP;
+    writerGroupConfig.customStateMachine = writerGroupStateMachine;
 
 
-    if (optContext->sks) {
+    if (pubContext->opts->sks) {
         UA_ServerConfig *config = UA_Server_getConfig(server);
         writerGroupConfig.securityMode = UA_MESSAGESECURITYMODE_SIGNANDENCRYPT;
         writerGroupConfig.securityGroupId = UA_STRING(DEMO_SECURITYGROUPNAME);
@@ -319,14 +410,20 @@ static void addWriterGroup(UA_Server *server, void *context) {
                                            UA_UADPNETWORKMESSAGECONTENTMASK_GROUPHEADER |
                                            UA_UADPNETWORKMESSAGECONTENTMASK_WRITERGROUPID |
                                            UA_UADPNETWORKMESSAGECONTENTMASK_PAYLOADHEADER |
-                                           UA_UADPNETWORKMESSAGECONTENTMASK_SEQUENCENUMBER);
+                                           UA_UADPNETWORKMESSAGECONTENTMASK_SEQUENCENUMBER |
+                                           UA_UADPNETWORKMESSAGECONTENTMASK_TIMESTAMP);
 
+    static UA_Double publishingOffsetValue;
+    publishingOffsetValue = 0.05; //(pubContext->opts->cycleTime / 1000000.0) * 0.6;
+    writerGroupMessage.publishingOffset = &publishingOffsetValue;
+    writerGroupMessage.publishingOffsetSize = 1;
+    
     UA_ExtensionObject_setValue(&writerGroupConfig.messageSettings, &writerGroupMessage,
                                 &UA_TYPES[UA_TYPES_UADPWRITERGROUPMESSAGEDATATYPE]);
 
     UA_Server_addWriterGroup(server, connectionIdent, &writerGroupConfig, &writerGroupIdent);
 
-    if (optContext->sks) {
+    if (pubContext->opts->sks) {
         UA_Server_setSksClient(server, writerGroupConfig.securityGroupId,
                         sksClientConfigGlobal, sksServerUrl,
                         sksPullRequestCallback, &writerGroupIdent);
@@ -349,8 +446,8 @@ addDataSetWriter(UA_Server *server) {
      * replayed messages (anti-replay check in ua_pubsub_reader.c). */
     UA_UadpDataSetWriterMessageDataType writerMessageSettings;
     UA_UadpDataSetWriterMessageDataType_init(&writerMessageSettings);
-    writerMessageSettings.dataSetMessageContentMask =
-        UA_UADPDATASETMESSAGECONTENTMASK_SEQUENCENUMBER;
+    writerMessageSettings.dataSetMessageContentMask = (UA_UadpNetworkMessageContentMask)(
+        UA_UADPDATASETMESSAGECONTENTMASK_SEQUENCENUMBER);
     UA_ExtensionObject_setValue(&dataSetWriterConfig.messageSettings,
                                 &writerMessageSettings,
                                 &UA_TYPES[UA_TYPES_UADPDATASETWRITERMESSAGEDATATYPE]);
@@ -367,13 +464,22 @@ static UA_StatusCode startPublisherCallback(
         void *objectContext, size_t inputSize,
         const UA_Variant *input, size_t outputSize,
         UA_Variant *output) {
-    CliOptions *optContext = (CliOptions *)methodContext;
-
+    PubSubCtx *pubContext = (PubSubCtx *)methodContext;
+printf("[DEBUG] pubContext=%p pubContext->opts=%p cycleTime=%ld\n",
+       (void*)pubContext, (void*)pubContext->opts, pubContext->opts->cycleTime);
     addPubSubConnection(server, &transportProfile, &networkAddressUrl);
     addPublishedDataSet(server);
     addDataSetField(server);
-    addWriterGroup(server, optContext);
+    sksServerUrl = resolveSksUrlFromLds(pubContext->creds);
+    if (sksServerUrl) {
+        printf("[INFO] SKS server URL found in LDS: %s\n", sksServerUrl);
+    } else {
+        printf("[WARNING] SKS server URL not found in LDS, using fallback: %s\n", SKS_SERVER_URL_FALLBACK);
+        sksServerUrl = (char *)SKS_SERVER_URL_FALLBACK;
+    }
+    addWriterGroup(server, pubContext);
     addDataSetWriter(server);
+
     UA_Server_enableDataSetWriter(server, dataSetWriterIdent);
     UA_Server_enableWriterGroup(server, writerGroupIdent);
     //UA_Server_setWriterGroupOperational(server, writerGroupIdent);
@@ -407,7 +513,7 @@ static UA_StatusCode startPublisherCallback(
  *                   +-- RemoteSystem_1/ (RELY-10TSN12)
  * ═══════════════════════════════════════════════════════════ */
 
-static void buildUAFXAddressSpace(UA_Server *server, CliOptions *optContext) {
+static void buildUAFXAddressSpace(UA_Server *server, PubSubCtx *pubContext) {
     UA_UInt16 nsFxAc = resolveNamespaceIndex(server, FXAC_NS_URI);
 
     UA_NodeId objectsFolder = UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER);
@@ -431,7 +537,7 @@ static void buildUAFXAddressSpace(UA_Server *server, CliOptions *optContext) {
     UA_Server_addMethodNode(server, UA_NODEID_NULL, acNode,
         UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
         qn(NS_LOCAL, "StartPublisher"), methAttr,
-        startPublisherCallback, 0, NULL, 0, NULL, optContext, NULL);
+        startPublisherCallback, 0, NULL, 0, NULL, pubContext, NULL);
     registerEstablishConnectionsMethod(server, acNode);
 
     /* ── Trova Assets/ già creata dal tipo e popolala ── */
@@ -500,18 +606,46 @@ int main(int argc, char **argv) {
     printf("  OPC UA FX Temperature Server (with LLDP)\n");
     printf("========================================================\n\n");
     CliOptions opts = parseArgs(argc, argv);
+    int rtResult;
 
-    if (opts.rt)
-        lockMemoryRT();
+    if (opts.rt) {
+        rtResult = lockMemoryRT();
+        if (rtResult == -1) {
+            printf("Memory lock failed (ran as root ?)");
+            return 1;
+        }
+    }
+
+    if (opts.rtCore != NO_RT_CORE) {
+        rtResult = setupCpuAffinity(opts.rtCore);
+        if (rtResult == -1) {
+            printf("Unable to change CPU affinity (ran as root ?)");
+            return 1;
+        }
+    }
+
+    if (opts.schedPrio != NO_SCHED_PRIO) {
+        rtResult = setupSchedulePriority(opts.schedPrio);
+        if (rtResult == -1) {
+            printf("Unable to change schedule priority (ran as root ?)");
+            return 1;
+        }
+    }
+
 
     clientCreds creds;
     loadClientCredentials(opts.ldsUrl, opts.certDir, "publisher", "urn:example:uafx:temperature-sensor-1", &creds);
 
+    struct sigevent sigev;
+    memset(&sigev, 0, sizeof(sigev));
+    sigev.sigev_notify = SIGEV_THREAD;
+    sigev.sigev_notify_function = writerGroupPublishTrigger;
+    timer_create(CLOCKID, &sigev, &writerGroupTimer);
+
     /* ─── Crea server ────────────────────────────────────────── */
-    UA_Server *server = UA_Server_new();
+    server = UA_Server_new();
     UA_ServerConfig *config = UA_Server_getConfig(server);
-     transportProfile =
-        UA_STRING("http://opcfoundation.org/UA-Profile/Transport/pubsub-eth-uadp");
+     transportProfile = UA_STRING("http://opcfoundation.org/UA-Profile/Transport/pubsub-eth-uadp");
      networkAddressUrl.networkInterface = UA_STRING(opts.iface);
     networkAddressUrl.url = UA_STRING(opts.url);
     static UA_DataTypeArray customDataTypesAC = {
@@ -534,22 +668,29 @@ int main(int argc, char **argv) {
 
     config->customDataTypes = &customDataTypesDI;
 
-    UA_ByteString caCert = loadFile(buildCertPath(opts.certDir, "ca.cert.der"));
-    UA_ByteString crl = loadFile(buildCertPath(opts.certDir, "crl.der"));
     char *serverCertPath = buildCertPath(opts.certDir, "temperature_server.cert.der");
     char *serverKeyPath  = buildCertPath(opts.certDir, "temperature_server.key.der");
     UA_ByteString serverCert = loadFile(serverCertPath);
     UA_ByteString serverKey  = loadFile(serverKeyPath);
 
-    UA_ServerConfig_setDefaultWithSecurityPolicies(config, 4941, &serverCert, &serverKey, &caCert, 1, &crl, 1, NULL, 0);
+    UA_ServerConfig_setDefaultWithSecurityPolicies(config, 4941, &serverCert, &serverKey, &creds.caCert, 1, &creds.crl, 1, NULL, 0);
+
+    UA_KeyValueMap_setScalar(&config->eventLoop->params, UA_QUALIFIEDNAME(0, "clock-source-monotonic"), &clockSource, &UA_TYPES[UA_TYPES_INT32]);
 
     /* AccessControl: X.509 certificate authentication + restrict
      * Method calls to authenticated sessions only. Uses the same
      * activateSession_sks() already validated on the SKS server --
      * channel cert must equal user token cert, both verified against
      * the trustlist above. No anonymous access, no passwords. */
+    
+    static const char *operatorDeviceNames[] = { "asyncua" };
+    UafxRoleConfig roleConfig;
+    loadRoleConfig(opts.certDir, operatorDeviceNames, 1, &roleConfig);
+
     config->accessControl.activateSession = activateSession;
     config->accessControl.getUserExecutableOnObject = getUserExecutableOnObject_app;
+    config->accessControl.getUserAccessLevel = getUserAccessLevel_app;
+    setRoleConfig(&roleConfig);
 
     UA_String hostname = UA_String_fromChars(SERVER_PUBLIC_URL);
     config->applicationDescription.applicationType = UA_APPLICATIONTYPE_SERVER;
@@ -557,37 +698,20 @@ int main(int argc, char **argv) {
 
 
     if (opts.sks) {
-        config->pubSubConfig.securityPolicies =
-        (UA_PubSubSecurityPolicy *)UA_malloc(sizeof(UA_PubSubSecurityPolicy));
-    config->pubSubConfig.securityPoliciesSize = 1;
-    UA_PubSubSecurityPolicy_Aes256Ctr(config->pubSubConfig.securityPolicies,
-                                      config->logging);
-
-    UA_ByteString pubCert = loadFile(buildCertPath(opts.certDir, "publisher.cert.der"));
-    UA_ByteString pubKey  = loadFile(buildCertPath(opts.certDir, "publisher.key.der"));
-    if(pubCert.length == 0 || pubKey.length == 0) {
-        printf("[ERROR] Cannot load %s / %s — generate them first "
-               "(see tools/certs/create_self-signed.py)\n",
-               buildCertPath(opts.certDir, "publisher.cert.der"), buildCertPath(opts.certDir, "publisher.key.der"));
-        UA_Server_delete(server);
-        return EXIT_FAILURE;
-    }
-    //sksClientConfigGlobal = encryptedSksClient(APPLICATION_URI, pubCert, pubKey, loadFile(buildCertPath(opts.certDir, "ca.cert.der")), crl);
-    sksClientConfigGlobal = encryptedSksClient(&creds);
-    UA_ByteString_clear(&pubCert);
-    UA_ByteString_clear(&pubKey);
+        config->pubSubConfig.securityPolicies = (UA_PubSubSecurityPolicy *)UA_malloc(sizeof(UA_PubSubSecurityPolicy));
+        config->pubSubConfig.securityPoliciesSize = 1;
+        UA_PubSubSecurityPolicy_Aes256Ctr(config->pubSubConfig.securityPolicies, config->logging);
+        sksClientConfigGlobal = encryptedSksClient(&creds);
     }
 
 
     UA_String_clear(&config->applicationDescription.applicationUri);
-    config->applicationDescription.applicationUri = creds.applicationUri;
+    UA_String_copy(&creds.applicationUri, &config->applicationDescription.applicationUri);
 
     UA_LocalizedText_clear(&config->applicationDescription.applicationName);
-    config->applicationDescription.applicationName =
-        UA_LOCALIZEDTEXT_ALLOC("en-US", "UAFX Temperature Sensor");
+    config->applicationDescription.applicationName = UA_LOCALIZEDTEXT_ALLOC("en-US", "UAFX Temperature Sensor");
     config->applicationDescription.discoveryUrlsSize = 1;
-    config->applicationDescription.discoveryUrls =
-        (UA_String*)UA_Array_new(1, &UA_TYPES[UA_TYPES_STRING]);
+    config->applicationDescription.discoveryUrls = (UA_String*)UA_Array_new(1, &UA_TYPES[UA_TYPES_STRING]);
     config->applicationDescription.discoveryUrls[0] = hostname;
 
     config->mdnsEnabled = UA_FALSE;
@@ -621,8 +745,11 @@ int main(int argc, char **argv) {
         printf("[SERVER] + UAFX types loaded perfectly\n\n");
     }
 
+    PubSubCtx pubContext;
+    pubContext.opts = &opts;
+    pubContext.creds = &creds;
     /* ─── Costruisci AddressSpace ────────────────────────────── */
-    buildUAFXAddressSpace(server, &opts);
+    buildUAFXAddressSpace(server, &pubContext);
 
 
     /* ─── Avvia server ───────────────────────────────────────── */
@@ -645,7 +772,7 @@ int main(int argc, char **argv) {
             printf("[WARNING] SKS server URL not found in LDS, using fallback: %s\n", SKS_SERVER_URL_FALLBACK);
             sksServerUrl = (char *)SKS_SERVER_URL_FALLBACK;
         }
-        addWriterGroup(server, &opts);
+        addWriterGroup(server, &pubContext);
         addDataSetWriter(server);
 
         UA_Server_enableDataSetWriter(server, dataSetWriterIdent);
@@ -655,10 +782,14 @@ int main(int argc, char **argv) {
     }
 
     /* ─── Registrazione all'LDS ──────────────────────────────── */
-    UA_StatusCode rc = registerToLdsSecurely(server, &creds);
+    /*UA_StatusCode rc = registerToLdsSecurely(server, &creds);
     if(rc != UA_STATUSCODE_GOOD) {
         printf("[WARNING] Shared LDS registration init failed: %s\n", UA_StatusCode_name(rc));
-    }
+    }*/
+    UA_UInt64 ldsRegisterCallbackId = 0;
+    void *ldsRegisterCtx = NULL;
+    startPeriodicLdsRegistration(server, &creds, 5*60*1000.0, &ldsRegisterCallbackId, &ldsRegisterCtx);
+
 
     printf("\n========================================================\n");
     printf("  SERVER RUNNING on %s\n", SERVER_PUBLIC_URL);
@@ -683,27 +814,21 @@ int main(int argc, char **argv) {
     printf("Press Ctrl+C to stop\n\n");
 
     /* ─── Loop principale ────────────────────────────────────── */
-    if (opts.rtCore != NO_RT_CORE)
-        setupCpuAffinity(opts.rtCore);
-
-    if (opts.schedPrio != NO_SCHED_PRIO)
-        setupSchedulePriority(opts.schedPrio);
-
     if (opts.rt) {
         struct timespec next;
-        clock_gettime(CLOCK_REALTIME, &next);
+        clock_gettime(CLOCKID, &next);
         while(running) {
             next.tv_nsec += opts.cycleTime;
-            while(next.tv_nsec >= opts.cycleTime*1000000L) {
-                next.tv_nsec -= opts.cycleTime*1000000L;
+            while(next.tv_nsec >= 1000000000L) {
+                next.tv_nsec -= 1000000000L;
                 next.tv_sec++;
             }
 
             int rc;
             do {
-                rc = clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &next, NULL);
+                rc = clock_nanosleep(CLOCKID, TIMER_ABSTIME, &next, NULL);
             } while(rc == EINTR);
-
+            updateTemperatureRT();
             UA_Server_run_iterate(server, false);
         }
     } else {
@@ -713,8 +838,18 @@ int main(int argc, char **argv) {
     }
 
     printf("\n[SERVER] Shutting down...\n");
+    if(ldsRegisterCallbackId != 0)
+        stopPeriodicLdsRegistration(server, ldsRegisterCallbackId, ldsRegisterCtx);
+
     UA_Server_run_shutdown(server);
+
+    if (temperatureDataValueRT)
+        UA_DataValue_delete(temperatureDataValueRT);
+
+    timer_delete(writerGroupTimer);
     UA_Server_delete(server);
+    clearClientCredentials(&creds);
+    clearRoleConfig(&roleConfig);
     printf("[SERVER] Stopped cleanly\n\n");
 
     return EXIT_SUCCESS;
